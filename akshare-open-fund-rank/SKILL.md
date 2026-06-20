@@ -128,6 +128,9 @@ uv run python scripts/open_fund_rank.py --top-n 20
 # 获取股票型基金，按近 3 月涨幅排序，取前 10
 uv run python scripts/open_fund_rank.py --symbol 股票型 --sort-by 近3月 --top-n 10
 
+# 获取债券型基金，按单位净值升序排列
+uv run python scripts/open_fund_rank.py --symbol 债券型 --sort-by 单位净值 --order asc
+
 # 筛选近1月>10%且近1年>30%的基金，按近1年降序，取前20
 uv run python scripts/open_fund_rank.py --filter 近1月>10 --filter 近1年>30 --top-n 20
 
