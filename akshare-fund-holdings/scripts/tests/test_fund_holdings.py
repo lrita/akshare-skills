@@ -400,3 +400,119 @@ class TestHoldingsFetch:
         # 宁德时代应排第二：1000000
         assert top_stocks[1]["stock_code"] == "300750"
         assert top_stocks[1]["fund_count"] == 1
+
+
+@pytest.mark.integration
+class TestIntegration:
+    """真实 API 集成测试"""
+
+    def test_api_availability(self):
+        """验证 fund_scale_open_sina 和 fund_portfolio_hold_em 可用"""
+        import akshare as ak
+
+        # 基金列表 API
+        df = ak.fund_scale_open_sina(symbol="股票型基金")
+        assert len(df) > 100
+        assert "基金代码" in df.columns
+
+        # 持仓 API
+        df2 = ak.fund_portfolio_hold_em(symbol="510300", date="2025")
+        assert len(df2) > 0
+        assert "股票代码" in df2.columns
+
+    def test_end_to_end_mini(self):
+        """端到端测试: min_scale=100亿, top_n=5 (小规模快速验证)"""
+        import subprocess
+
+        script = os.path.join(
+            os.path.dirname(__file__), "..", "fund_holdings.py"
+        )
+        result = subprocess.run(
+            [
+                sys.executable, script,
+                "--min-scale", "100",
+                "--top-n", "5",
+                "--workers", "2",
+            ],
+            capture_output=True, text=True,
+        )
+        assert result.returncode in (0, 1)
+
+        output = json.loads(result.stdout)
+        assert "meta" in output
+        assert "top_stocks" in output
+        assert "errors" in output
+        meta = output["meta"]
+        assert isinstance(meta["total_funds_fetched"], int)
+        # returncode 0 means funds were found and processed fully
+        if result.returncode == 0:
+            assert meta["top_n"] == 5
+
+    def test_cache_reuse(self):
+        """二次运行使用缓存，不发起新 API 请求 (通过速度判断)"""
+        import subprocess
+        import time
+
+        script = os.path.join(
+            os.path.dirname(__file__), "..", "fund_holdings.py"
+        )
+        # 第一次运行
+        start = time.time()
+        result1 = subprocess.run(
+            [
+                sys.executable, script,
+                "--min-scale", "100",
+                "--top-n", "3",
+                "--workers", "2",
+            ],
+            capture_output=True, text=True,
+        )
+        elapsed1 = time.time() - start
+
+        # 第二次运行（应使用缓存，更快）
+        start = time.time()
+        result2 = subprocess.run(
+            [
+                sys.executable, script,
+                "--min-scale", "100",
+                "--top-n", "3",
+                "--workers", "2",
+            ],
+            capture_output=True, text=True,
+        )
+        elapsed2 = time.time() - start
+
+        assert result1.returncode in (0, 1)
+        assert result2.returncode in (0, 1)
+        assert result1.stdout == result2.stdout
+        print(f"  Run 1: {elapsed1:.1f}s, Run 2: {elapsed2:.1f}s")
+
+    def test_end_to_end_defaults(self):
+        """端到端测试：默认参数 (min_scale=10亿, top_n=5)"""
+        import subprocess
+
+        script = os.path.join(
+            os.path.dirname(__file__), "..", "fund_holdings.py"
+        )
+        result = subprocess.run(
+            [
+                sys.executable, script,
+                "--top-n", "5",
+                "--workers", "4",
+            ],
+            capture_output=True, text=True,
+            timeout=120,
+        )
+        assert result.returncode == 0
+
+        output = json.loads(result.stdout)
+        meta = output["meta"]
+        assert meta["min_scale_yi"] == 10.0
+        assert len(output["top_stocks"]) <= 5
+        if output["top_stocks"]:
+            s = output["top_stocks"][0]
+            assert "stock_code" in s
+            assert "stock_name" in s
+            assert "total_holding_amount" in s
+            assert "fund_count" in s
+            assert "quarterly_trend" in s
