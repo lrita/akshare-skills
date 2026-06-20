@@ -72,9 +72,10 @@ JSON 输出到 stdout，运行进度和错误日志到 stderr。
 }
 ```
 
-- 金额单位：万元
+- **金额单位**：万元（与 akshare `持仓市值` 字段单位一致）。`total_holding_amount` 为近 4 个季度所有基金持仓市值的总和，`quarterly_trend` 中 `amount` 为当季度持仓市值合计
 - `quarterly_trend` 按季度升序排列
 - 缓存目录：`~/.cache/akshare-fund-holdings/`
+- 进度信息输出到 stderr，不影响 stdout 的 JSON 解析
 
 ## 缓存策略
 
