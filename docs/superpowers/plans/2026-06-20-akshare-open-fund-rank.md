@@ -302,9 +302,6 @@ class TestParseFilter:
     def test_parse_unknown_column_raises_valueerror(self):
         with pytest.raises(ValueError):
             ofr.parse_filter("未知列>5")
-        assert col == "未知列"
-        assert op == ">"
-        assert val == pytest.approx(5.0)
 
 
 # ---- 过滤应用 ----
