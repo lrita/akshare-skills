@@ -161,6 +161,113 @@ class TestCacheManagement:
 
 
 import pandas as pd
+import argparse
+
+
+class TestCLIAndMainLogic:
+    """CLI 入口和主流程测试"""
+
+    @patch("fund_holdings.fetch_fund_list")
+    @patch("fund_holdings.fetch_fund_holdings")
+    @patch("fund_holdings.is_cache_valid", return_value=False)
+    @patch("fund_holdings.load_cache", return_value=None)
+    def test_main_output_json_format(self, mock_load_cache, mock_is_cache_valid,
+                                      mock_fetch_holdings, mock_fetch_list):
+        """端到端测试：输出正确的 JSON 格式"""
+        from io import StringIO
+
+        mock_fetch_list.return_value = [
+            {"基金代码": "510300", "基金简称": "沪深300ETF", "总募集规模": 3296860.0, "单位净值": 4.97},
+            {"基金代码": "070011", "基金简称": "嘉实策略", "总募集规模": 4191700.0, "单位净值": 0.916},
+        ]
+        mock_fetch_holdings.return_value = {
+            "600519": {
+                "stock_name": "贵州茅台",
+                "quarters": {"2026Q1": 1600000.0, "2025Q4": 1150000.0},
+            },
+        }
+
+        args = argparse.Namespace(
+            top_n=2,
+            min_scale=10.0,
+            fund_types="股票型基金,混合型基金",
+            workers=2,
+        )
+
+        buf = StringIO()
+        with patch("sys.stdout", buf):
+            exit_code = fund_holdings.main_with_args(args)
+
+        assert exit_code == 0
+        output = json.loads(buf.getvalue())
+        assert "meta" in output
+        assert "top_stocks" in output
+        assert "errors" in output
+        assert output["meta"]["top_n"] == 2
+        assert output["meta"]["total_funds_fetched"] == 2
+        assert output["meta"]["success_funds"] == 2
+        assert len(output["top_stocks"]) == 1
+
+    @patch("fund_holdings.fetch_fund_list")
+    def test_main_no_funds_exit_code_1(self, mock_fetch_list):
+        """没有基金通过过滤时返回 exit code 1"""
+        from io import StringIO
+
+        mock_fetch_list.return_value = []
+
+        args = argparse.Namespace(
+            top_n=100,
+            min_scale=1000.0,
+            fund_types="股票型基金",
+            workers=2,
+        )
+
+        buf = StringIO()
+        err_buf = StringIO()
+        with patch("sys.stdout", buf), patch("sys.stderr", err_buf):
+            exit_code = fund_holdings.main_with_args(args)
+
+        assert exit_code == 1
+
+    @patch("fund_holdings.ak")
+    @patch("fund_holdings.is_cache_valid", return_value=False)
+    @patch("fund_holdings.load_cache", return_value=None)
+    def test_full_pipeline_with_mock_apis(self, mock_load_cache, mock_is_cache_valid, mock_ak):
+        """完整流程测试：从基金列表到 JSON 输出"""
+        from io import StringIO
+
+        df_list = pd.DataFrame([
+            {"基金代码": "510300", "基金简称": "沪深300ETF", "总募集规模": 3296860.0, "单位净值": 4.97},
+            {"基金代码": "070011", "基金简称": "嘉实策略", "总募集规模": 4191700.0, "单位净值": 0.916},
+        ])
+        mock_ak.fund_scale_open_sina.side_effect = lambda symbol: df_list.copy() if symbol == "股票型基金" else pd.DataFrame()
+
+        df_holdings = pd.DataFrame([
+            {"序号": 1, "股票代码": "600519", "股票名称": "贵州茅台",
+             "占净值比例": 4.74, "持仓市值": 1606717.16,
+             "季度": "2026年1季度股票投资明细"},
+            {"序号": 2, "股票代码": "300750", "股票名称": "宁德时代",
+             "占净值比例": 3.23, "持仓市值": 1092918.96,
+             "季度": "2026年1季度股票投资明细"},
+        ])
+        mock_ak.fund_portfolio_hold_em.side_effect = lambda *args, **kwargs: df_holdings.copy()
+
+        args = argparse.Namespace(
+            top_n=2,
+            min_scale=10.0,
+            fund_types="股票型基金",
+            workers=2,
+        )
+
+        buf = StringIO()
+        with patch("sys.stdout", buf):
+            exit_code = fund_holdings.main_with_args(args)
+
+        assert exit_code == 0
+        output = json.loads(buf.getvalue())
+        assert output["meta"]["success_funds"] == 2
+        assert len(output["top_stocks"]) == 2
+        assert output["top_stocks"][0]["stock_code"] == "600519"
 
 
 class TestFundListFetch:

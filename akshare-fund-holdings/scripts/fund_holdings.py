@@ -348,3 +348,209 @@ def aggregate_holdings(
     ]
 
     return top_stocks, quarterly
+
+
+# ---- 主流程 ----
+
+def _run_holdings_pipeline(
+    funds: list[dict],
+    target_quarters: list[tuple[str, str]],
+    max_workers: int,
+    cache_dir: Path,
+) -> tuple[dict[str, dict], list[dict]]:
+    """并发拉取所有基金持仓数据"""
+    all_holdings: dict[str, dict] = {}
+    errors: list[dict] = []
+
+    # 加载之前的失败记录
+    failures_path = cache_dir / "failures.json"
+    prev_failures = load_cache(failures_path) or {}
+
+    # 将之前失败的基金也加入拉取队列
+    failed_codes = set(prev_failures.keys())
+    if failed_codes:
+        print(f"Retrying {len(failed_codes)} previously failed funds...", file=sys.stderr)
+
+    # 合并待拉取的基金列表
+    all_codes_to_fetch = list(funds)
+    for fc in failed_codes:
+        if fc not in {f["基金代码"] for f in funds}:
+            all_codes_to_fetch.append({"基金代码": fc, "基金简称": fc, "总募集规模": 0, "单位净值": 0})
+
+    latest_quarter = target_quarters[0][0] if target_quarters else ""
+
+    holdings_cache_dir = cache_dir / "holdings"
+    holdings_cache_dir.mkdir(parents=True, exist_ok=True)
+
+    # 分离需要拉取和已缓存的基金
+    to_fetch: list[dict] = []
+    for fund in all_codes_to_fetch:
+        code = fund["基金代码"]
+        cache_path = holdings_cache_dir / f"{code}.json"
+        if is_holdings_cache_valid(cache_path, date.today(), latest_quarter):
+            cached = load_cache(cache_path)
+            if cached and "holdings" in cached:
+                all_holdings[code] = cached["holdings"]
+                prev_failures.pop(code, None)
+                continue
+        to_fetch.append(fund)
+
+    if to_fetch:
+        print(
+            f"Fetching holdings for {len(to_fetch)} funds "
+            f"({len(all_codes_to_fetch) - len(to_fetch)} from cache)...",
+            file=sys.stderr,
+        )
+
+        fetched = 0
+
+        def _fetch_one(fund):
+            code = fund["基金代码"]
+            result = fetch_fund_holdings(code, target_quarters)
+            if result is not None:
+                cache_path = holdings_cache_dir / f"{code}.json"
+                save_cache(cache_path, {
+                    "fetch_time": _now_str(),
+                    "quarters": [q for q, _ in target_quarters],
+                    "holdings": result,
+                })
+                return code, result, None
+            else:
+                return code, None, "failed_after_retries"
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_fetch_one, f): f for f in to_fetch}
+            for future in as_completed(futures):
+                code, result, error = future.result()
+                if result is not None:
+                    all_holdings[code] = result
+                    prev_failures.pop(code, None)
+                else:
+                    errors.append({"fund_code": code, "error": error})
+                    prev_failures[code] = {"fund_code": code, "error": error}
+
+                fetched += 1
+                if fetched % 50 == 0 or fetched == len(to_fetch):
+                    print(
+                        f"  Progress: {fetched}/{len(to_fetch)}",
+                        file=sys.stderr,
+                    )
+
+    # 保存更新后的 failures
+    if prev_failures:
+        save_cache(failures_path, prev_failures)
+    elif failures_path.exists():
+        failures_path.unlink()
+
+    return all_holdings, errors
+
+
+def _now_str() -> str:
+    """当前时间字符串"""
+    from datetime import datetime
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def main_with_args(args: argparse.Namespace) -> int:
+    """主流程：基金列表 → 持仓拉取 → 聚合 → 输出"""
+    fund_types = [t.strip() for t in args.fund_types.split(",")]
+    min_scale_yi = float(args.min_scale)
+
+    cache_dir = CACHE_BASE
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    # 尝试从缓存加载基金列表
+    fund_list_cache = cache_dir / "fund_list.json"
+    funds = None
+    if is_cache_valid(fund_list_cache, ttl_hours=168, today=date.today()):
+        cached = load_cache(fund_list_cache)
+        if cached and "funds" in cached:
+            cached_types = set(cached.get("fund_types", []))
+            cached_min_yi = cached.get("min_scale_yi", 0)
+            if cached_types == set(fund_types) and cached_min_yi <= min_scale_yi:
+                all_cached = cached["funds"]
+                funds = [f for f in all_cached if f["总募集规模"] >= min_scale_yi * 10000]
+
+    if funds is None:
+        try:
+            all_funds = fetch_fund_list(fund_types, min_scale_yi)
+        except Exception as e:
+            print(f"FATAL: Failed to fetch fund list: {e}", file=sys.stderr)
+            return 2
+        save_cache(fund_list_cache, {
+            "fetch_time": _now_str(),
+            "fund_types": fund_types,
+            "min_scale_yi": min_scale_yi,
+            "funds": all_funds,
+        })
+        funds = all_funds
+
+    if not funds:
+        print(
+            f"Warning: No funds match min_scale={min_scale_yi}亿. "
+            f"Try lowering --min-scale.",
+            file=sys.stderr,
+        )
+        json.dump({
+            "meta": {"total_funds_fetched": 0, "error": "no_matching_funds"},
+            "top_stocks": [],
+            "errors": [],
+        }, sys.stdout, ensure_ascii=False)
+        return 1
+
+    target_quarters = infer_target_quarters(date.today())
+    quarter_labels = [q for q, _ in target_quarters]
+
+    total_funds = len(funds)
+    all_holdings, errors = _run_holdings_pipeline(
+        funds, target_quarters, args.workers, cache_dir
+    )
+
+    top_stocks, quarterly = aggregate_holdings(all_holdings, args.top_n)
+
+    output = {
+        "meta": {
+            "fetch_time": _now_str(),
+            "fund_types": fund_types,
+            "min_scale_yi": min_scale_yi,
+            "total_funds_fetched": total_funds,
+            "success_funds": len(all_holdings),
+            "failed_funds": len(errors),
+            "quarters": quarter_labels,
+            "top_n": args.top_n,
+            "actual_top_n": len(top_stocks),
+        },
+        "top_stocks": top_stocks,
+        "errors": errors,
+    }
+
+    json.dump(output, sys.stdout, ensure_ascii=False)
+    return 0
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="基金抱团 TopN 股票分析")
+    parser.add_argument(
+        "--top-n", type=int, default=100,
+        help="返回 TopN 股票 (默认: 100)",
+    )
+    parser.add_argument(
+        "--min-scale", type=float, default=10.0,
+        help="最低募集规模/亿元 (默认: 10)",
+    )
+    parser.add_argument(
+        "--fund-types", type=str, default="股票型基金,混合型基金",
+        help="基金类型，逗号分隔 (默认: 股票型基金,混合型基金)",
+    )
+    parser.add_argument(
+        "--workers", type=int, default=8,
+        help="并发 worker 数 (默认: 8)",
+    )
+
+    args = parser.parse_args()
+    exit_code = main_with_args(args)
+    sys.exit(exit_code)
+
+
+if __name__ == "__main__":
+    main()
