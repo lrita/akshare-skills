@@ -111,6 +111,16 @@ class TestParseFilter:
         with pytest.raises(ValueError):
             ofr.parse_filter("未知列>5")
 
+    def test_parse_string_column_raises_valueerror(self):
+        """非数值列（如手续费）不在 SORT_BY_CHOICES 中，应拒绝"""
+        with pytest.raises(ValueError):
+            ofr.parse_filter("手续费=0.15")
+
+    def test_parse_fund_code_column_raises_valueerror(self):
+        """基金代码不在 SORT_BY_CHOICES 中，应拒绝"""
+        with pytest.raises(ValueError):
+            ofr.parse_filter("基金代码=000001")
+
 
 # ---- 过滤应用 ----
 

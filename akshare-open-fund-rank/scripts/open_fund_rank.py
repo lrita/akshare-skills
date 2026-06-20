@@ -12,7 +12,6 @@ import re
 from typing import Optional
 
 import pandas as pd
-import numpy as np
 
 
 # ---- 常量 ----
@@ -120,7 +119,7 @@ def parse_filter(raw: str) -> tuple:
             f"运算符: >, >=, <, <=, =。示例: --filter 近1月>10"
         )
     col, op, val = m.group(1), m.group(2), m.group(3)
-    if col not in CN_TO_EN_COLUMN:
+    if col not in SORT_BY_CHOICES:
         raise ValueError(
             f"非法的过滤列名: '{col}'。"
             f"合法列名: {', '.join(SORT_BY_CHOICES)}"
