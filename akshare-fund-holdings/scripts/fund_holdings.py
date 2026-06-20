@@ -349,7 +349,7 @@ def aggregate_holdings(
 
     返回:
         (top_stocks, quarterly_trend):
-            top_stocks: TopN 股票列表，按 total_holding_amount 降序
+            top_stocks: TopN 股票列表，按最新季度持仓金额降序
             quarterly_trend: {股票代码: {季度: {amount, fund_count}}}
     """
     stock_agg: dict[str, dict] = {}
@@ -366,7 +366,6 @@ def aggregate_holdings(
         for stock_code, info in holdings.items():
             if stock_code not in stock_agg:
                 stock_agg[stock_code] = {
-                    "total_amount": 0.0,
                     "latest_amount": 0.0,
                     "fund_count": 0,
                     "stock_name": info["stock_name"],
@@ -375,7 +374,6 @@ def aggregate_holdings(
             stock_agg[stock_code]["fund_count"] += 1
 
             for q, amt in info.get("quarters", {}).items():
-                stock_agg[stock_code]["total_amount"] += amt
                 if q == latest_quarter:
                     stock_agg[stock_code]["latest_amount"] += amt
 
@@ -397,7 +395,6 @@ def aggregate_holdings(
             "stock_code": code,
             "stock_name": info["stock_name"],
             "latest_holding_amount": info["latest_amount"],
-            "total_holding_amount": info["total_amount"],
             "fund_count": info["fund_count"],
             "quarterly_trend": [
                 {

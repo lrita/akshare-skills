@@ -432,12 +432,11 @@ class TestHoldingsFetch:
             holdings_data, top_n=2
         )
         assert len(top_stocks) == 2
-        # 贵州茅台排第一: latest=1.6M+0.5M=2.1M, total=2.1M
+        # 贵州茅台排第一: latest=1.6M+0.5M=2.1M
         assert top_stocks[0]["stock_code"] == "600519"
         assert top_stocks[0]["latest_holding_amount"] == 2100000.0
-        assert top_stocks[0]["total_holding_amount"] == 2100000.0
         assert top_stocks[0]["fund_count"] == 2
-        # 宁德时代排第二: latest=1M, total=1M
+        # 宁德时代排第二: latest=1M
         assert top_stocks[1]["stock_code"] == "300750"
         assert top_stocks[1]["latest_holding_amount"] == 1000000.0
         assert top_stocks[1]["fund_count"] == 1
@@ -560,6 +559,5 @@ class TestIntegration:
             assert "stock_code" in s
             assert "stock_name" in s
             assert "latest_holding_amount" in s
-            assert "total_holding_amount" in s
             assert "fund_count" in s
             assert "quarterly_trend" in s
