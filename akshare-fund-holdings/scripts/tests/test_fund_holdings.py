@@ -158,3 +158,62 @@ class TestCacheManagement:
         fund_holdings.save_cache(cache_path, failures)
         loaded = fund_holdings.load_cache(cache_path)
         assert loaded["001234"]["error"] == "timeout"
+
+
+import pandas as pd
+
+
+class TestFundListFetch:
+    """基金列表拉取、去重和过滤测试"""
+
+    @patch("fund_holdings.ak")
+    def test_fetch_fund_list_merges_and_dedup(self, mock_ak):
+        """两个基金类型合并后去重"""
+        # 模拟股票型基金数据
+        df_equity = pd.DataFrame([
+            {"基金代码": "510300", "基金简称": "沪深300ETF", "总募集规模": 3296860.0},
+            {"基金代码": "512960", "基金简称": "央企ETF", "总募集规模": 2522230.0},
+            {"基金代码": "999999", "基金简称": "重复基金", "总募集规模": 100000.0},
+        ])
+        # 模拟混合型基金数据 (含重复的 999999)
+        df_mixed = pd.DataFrame([
+            {"基金代码": "070011", "基金简称": "嘉实策略", "总募集规模": 4191700.0},
+            {"基金代码": "999999", "基金简称": "重复基金", "总募集规模": 100000.0},
+        ])
+        mock_ak.fund_scale_open_sina.side_effect = [df_equity, df_mixed]
+
+        result = fund_holdings.fetch_fund_list(["股票型基金", "混合型基金"])
+        assert len(result) == 4  # 5 - 1 重复
+        codes = [f["基金代码"] for f in result]
+        assert codes.count("999999") == 1  # 只出现一次
+
+    @patch("fund_holdings.ak")
+    def test_filter_by_min_scale(self, mock_ak):
+        """按规模过滤，排除 NaN 和低于门槛的基金"""
+        df_equity = pd.DataFrame([
+            {"基金代码": "510300", "基金简称": "大基金", "总募集规模": 500000.0},    # 50 亿
+            {"基金代码": "000001", "基金简称": "小基金", "总募集规模": 50000.0},     # 5 亿
+            {"基金代码": "000002", "基金简称": "空规模基金", "总募集规模": None},    # NaN
+        ])
+        df_mixed = pd.DataFrame([])
+        mock_ak.fund_scale_open_sina.side_effect = [df_equity, df_mixed]
+
+        result = fund_holdings.fetch_fund_list(
+            ["股票型基金"], min_scale_yi=10.0
+        )
+        assert len(result) == 1
+        assert result[0]["基金代码"] == "510300"
+
+    @patch("fund_holdings.ak")
+    def test_exclude_zero_scale(self, mock_ak):
+        """总募集规模为 0 的基金被排除"""
+        df = pd.DataFrame([
+            {"基金代码": "000001", "基金简称": "零规模", "总募集规模": 0.0},
+            {"基金代码": "000002", "基金简称": "正规模", "总募集规模": 100000.0},
+        ])
+        mock_ak.fund_scale_open_sina.return_value = df
+
+        result = fund_holdings.fetch_fund_list(["股票型基金"], min_scale_yi=5.0)
+        codes = [f["基金代码"] for f in result]
+        assert "000001" not in codes
+        assert "000002" in codes

@@ -14,6 +14,8 @@ from datetime import date, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+import akshare as ak
+
 
 # ---- 季度推断 ----
 
@@ -151,3 +153,50 @@ def is_holdings_cache_valid(
         return False
     cached_quarters = set(data.get("quarters", []))
     return latest_available_quarter in cached_quarters
+
+
+def fetch_fund_list(
+    fund_types: list[str],
+    min_scale_yi: float = 10.0,
+) -> list[dict]:
+    """拉取基金列表，去重，按规模过滤
+
+    参数:
+        fund_types: 基金类型列表，如 ["股票型基金", "混合型基金"]
+        min_scale_yi: 最低总募集规模（亿元），默认 10
+
+    返回:
+        list[dict]: 过滤后的基金列表，每个元素含基金代码和规模信息
+    """
+    min_scale = min_scale_yi * 10000  # 亿元 → 万元
+
+    seen_codes: set[str] = set()
+    funds: list[dict] = []
+
+    for ftype in fund_types:
+        df = ak.fund_scale_open_sina(symbol=ftype)
+        for _, row in df.iterrows():
+            code = str(row["基金代码"])
+            if code in seen_codes:
+                continue
+            seen_codes.add(code)
+
+            scale = row.get("总募集规模")
+            if scale is None or (isinstance(scale, float) and (scale != scale)):
+                continue
+            scale = float(scale)
+            if scale <= 0 or scale < min_scale:
+                continue
+
+            funds.append({
+                "基金代码": code,
+                "基金简称": str(row.get("基金简称", "")),
+                "总募集规模": scale,
+                "单位净值": (
+                    float(row["单位净值"]) if row.get("单位净值") is not None
+                    and not (isinstance(row["单位净值"], float) and row["单位净值"] != row["单位净值"])
+                    else 0.0
+                ),
+            })
+
+    return funds
