@@ -217,3 +217,79 @@ class TestFundListFetch:
         codes = [f["基金代码"] for f in result]
         assert "000001" not in codes
         assert "000002" in codes
+
+
+class TestHoldingsFetch:
+    """持仓数据拉取测试"""
+
+    @patch("fund_holdings.ak")
+    def test_fetch_single_fund_holdings(self, mock_ak):
+        """拉取单只基金持仓，返回按股票聚合的数据"""
+        mock_df = pd.DataFrame([
+            {"序号": 1, "股票代码": "600519", "股票名称": "贵州茅台",
+             "占净值比例": 4.74, "持仓市值": 1606717.16,
+             "季度": "2026年1季度股票投资明细"},
+            {"序号": 1, "股票代码": "600519", "股票名称": "贵州茅台",
+             "占净值比例": 5.89, "持仓市值": 1150782.02,
+             "季度": "2025年4季度股票投资明细"},
+        ])
+        mock_ak.fund_portfolio_hold_em.side_effect = [mock_df, pd.DataFrame()]
+
+        result = fund_holdings.fetch_fund_holdings(
+            "510300",
+            target_quarters=[("2026Q1", "2026"), ("2025Q4", "2025")],
+        )
+        assert "600519" in result
+        holdings = result["600519"]
+        assert len(holdings["quarters"]) >= 1
+        assert holdings["stock_name"] == "贵州茅台"
+
+    @patch("fund_holdings.ak")
+    def test_fetch_holdings_with_api_failure(self, mock_ak):
+        """API 调用失败返回 None"""
+        mock_ak.fund_portfolio_hold_em.side_effect = Exception("Network error")
+
+        result = fund_holdings.fetch_fund_holdings(
+            "001234",
+            target_quarters=[("2026Q1", "2026")],
+        )
+        assert result is None
+
+    def test_parse_quarter_label(self):
+        """解析季度标签"""
+        assert fund_holdings.parse_quarter_label("2025年1季度股票投资明细") == "2025Q1"
+        assert fund_holdings.parse_quarter_label("2025年4季度股票投资明细") == "2025Q4"
+        assert fund_holdings.parse_quarter_label("2024年3季度股票投资明细") == "2024Q3"
+
+    def test_aggregate_holdings_by_stock(self):
+        """按股票聚合持仓：跨基金累加持仓市值"""
+        holdings_data = {
+            "510300": {
+                "600519": {
+                    "stock_name": "贵州茅台",
+                    "quarters": {"2026Q1": 1600000.0},
+                },
+                "300750": {
+                    "stock_name": "宁德时代",
+                    "quarters": {"2026Q1": 1000000.0},
+                },
+            },
+            "070011": {
+                "600519": {
+                    "stock_name": "贵州茅台",
+                    "quarters": {"2026Q1": 500000.0},
+                },
+            },
+        }
+
+        top_stocks, trend = fund_holdings.aggregate_holdings(
+            holdings_data, top_n=2
+        )
+        assert len(top_stocks) == 2
+        # 贵州茅台应排第一：1600000 + 500000 = 2100000
+        assert top_stocks[0]["stock_code"] == "600519"
+        assert top_stocks[0]["total_holding_amount"] == 2100000.0
+        assert top_stocks[0]["fund_count"] == 2
+        # 宁德时代应排第二：1000000
+        assert top_stocks[1]["stock_code"] == "300750"
+        assert top_stocks[1]["fund_count"] == 1

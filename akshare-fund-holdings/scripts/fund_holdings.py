@@ -200,3 +200,151 @@ def fetch_fund_list(
             })
 
     return funds
+
+
+# ---- 持仓数据拉取 ----
+
+def parse_quarter_label(raw: str) -> str:
+    """解析 akshare 季度标签
+
+    参数:
+        raw: 如 "2025年1季度股票投资明细"
+
+    返回:
+        str: 如 "2025Q1"
+    """
+    parts = raw.split("年")
+    year = parts[0].strip()
+    quarter_str = parts[1].split("季度")[0].strip()
+    return f"{year}Q{quarter_str}"
+
+
+def fetch_fund_holdings(
+    fund_code: str,
+    target_quarters: list[tuple[str, str]],
+    retries: int = 3,
+) -> dict | None:
+    """拉取单只基金的持仓数据（带重试）
+
+    参数:
+        fund_code: 基金代码
+        target_quarters: [(季度标签, 年份), ...]
+        retries: 最大重试次数
+
+    返回:
+        dict | None: {股票代码: {stock_name, quarters: {季度: 金额}}}, 失败返回 None
+    """
+
+    # 按年份去重，每个年份调用一次 API
+    years = list(dict.fromkeys(y for _, y in target_quarters))
+
+    stock_map: dict[str, dict] = {}
+
+    for year in years:
+        for attempt in range(retries):
+            try:
+                # 随机间隔防拦截
+                time.sleep(random.uniform(0.3, 0.8))
+                df = ak.fund_portfolio_hold_em(symbol=fund_code, date=year)
+                break
+            except Exception:
+                if attempt < retries - 1:
+                    time.sleep(2 ** attempt * 2)
+                else:
+                    return None  # 全部重试失败
+
+        if df is None or len(df) == 0:
+            continue
+
+        for _, row in df.iterrows():
+            stock_code = str(row["股票代码"])
+            stock_name = str(row.get("股票名称", ""))
+            raw_quarter = str(row.get("季度", ""))
+            quarter = parse_quarter_label(raw_quarter)
+
+            # 只看目标季度
+            target_labels = [q for q, _ in target_quarters]
+            if quarter not in target_labels:
+                continue
+
+            holding_value = row.get("持仓市值")
+            if holding_value is None or (isinstance(holding_value, float) and holding_value != holding_value):
+                holding_value = 0.0
+            else:
+                holding_value = float(holding_value)
+
+            if stock_code not in stock_map:
+                stock_map[stock_code] = {"stock_name": stock_name, "quarters": {}}
+            stock_map[stock_code]["quarters"][quarter] = (
+                stock_map[stock_code]["quarters"].get(quarter, 0.0) + holding_value
+            )
+
+    return stock_map
+
+
+# ---- 聚合计算 ----
+
+def aggregate_holdings(
+    all_holdings: dict[str, dict],
+    top_n: int,
+) -> tuple[list[dict], dict[str, dict]]:
+    """跨基金聚合持仓，按股票代码累加持仓市值
+
+    参数:
+        all_holdings: {基金代码: {股票代码: {stock_name, quarters: {季度: 金额}}}}
+        top_n: 返回 TopN 股票
+
+    返回:
+        (top_stocks, quarterly_trend):
+            top_stocks: TopN 股票列表，按 total_holding_amount 降序
+            quarterly_trend: {股票代码: {季度: {amount, fund_count}}}
+    """
+    stock_agg: dict[str, dict] = {}
+    quarterly: dict[str, dict] = {}
+
+    for fund_code, holdings in all_holdings.items():
+        for stock_code, info in holdings.items():
+            if stock_code not in stock_agg:
+                stock_agg[stock_code] = {
+                    "total_amount": 0.0,
+                    "fund_count": 0,
+                    "stock_name": info["stock_name"],
+                }
+                quarterly[stock_code] = {}
+            stock_agg[stock_code]["fund_count"] += 1
+
+            for q, amt in info.get("quarters", {}).items():
+                stock_agg[stock_code]["total_amount"] += amt
+
+                if q not in quarterly[stock_code]:
+                    quarterly[stock_code][q] = {"amount": 0.0, "fund_count": 0}
+                quarterly[stock_code][q]["amount"] += amt
+                quarterly[stock_code][q]["fund_count"] += 1
+
+    sorted_stocks = sorted(
+        stock_agg.items(),
+        key=lambda x: x[1]["total_amount"],
+        reverse=True,
+    )
+    top = sorted_stocks[:top_n]
+
+    top_stocks = [
+        {
+            "rank": i + 1,
+            "stock_code": code,
+            "stock_name": info["stock_name"],
+            "total_holding_amount": info["total_amount"],
+            "fund_count": info["fund_count"],
+            "quarterly_trend": [
+                {
+                    "quarter": q,
+                    "amount": quarterly[code][q]["amount"],
+                    "fund_count": quarterly[code][q]["fund_count"],
+                }
+                for q in sorted(quarterly.get(code, {}).keys())
+            ],
+        }
+        for i, (code, info) in enumerate(top)
+    ]
+
+    return top_stocks, quarterly
