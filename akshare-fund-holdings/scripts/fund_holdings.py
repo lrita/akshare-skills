@@ -126,9 +126,11 @@ def is_cache_valid(cache_path: Path, ttl_hours: int, today: date) -> bool:
         return False
     try:
         from datetime import datetime
-        fetch_time = datetime.strptime(fetch_time_str, "%Y-%m-%d %H:%M:%S")
-        age = datetime.now() - fetch_time
-        return age.total_seconds() < ttl_hours * 3600
+        fetch_dt = datetime.strptime(fetch_time_str, "%Y-%m-%d %H:%M:%S")
+        # 使用传入的 today 参数计算 age，支持测试固定日期
+        ref_time = datetime.combine(today, datetime.now().time())
+        age_seconds = (ref_time - fetch_dt).total_seconds()
+        return age_seconds < ttl_hours * 3600
     except (ValueError, TypeError):
         return False
 
