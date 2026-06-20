@@ -146,8 +146,9 @@ class TestApplyFilters:
         df = ofr.rename_columns(df)
         filters = [("近1月", ">", 5.0), ("近1年", ">", 50.0)]
         result = ofr.apply_filters(df, filters)
-        assert len(result) == 1  # 只有基金A
-        assert result.iloc[0]["fund_code"] == "000001"
+        # 基金A (10.0, 100.0) 和 基金E (8.0, 80.0) 都满足条件
+        assert len(result) == 2
+        assert set(result["fund_code"]) == {"000001", "000005"}
 
     def test_nan_excluded_by_filter(self):
         df = make_mock_df()
