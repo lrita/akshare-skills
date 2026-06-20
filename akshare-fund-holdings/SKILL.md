@@ -35,6 +35,7 @@ JSON 输出到 stdout，运行进度和错误日志到 stderr。
 | `--min-scale` | 10.0 | 最低总募集规模（亿元） |
 | `--fund-types` | 股票型基金,混合型基金 | 基金类型，逗号分隔 |
 | `--workers` | 8 | 并发 worker 数 |
+| `--no-exclude-index` | - | 不过滤指数/ETF/联接/增强基金 |
 
 ## 输出格式
 

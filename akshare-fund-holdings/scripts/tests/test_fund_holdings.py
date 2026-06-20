@@ -192,6 +192,7 @@ class TestCLIAndMainLogic:
             min_scale=10.0,
             fund_types="股票型基金,混合型基金",
             workers=2,
+            exclude_index=True,
         )
 
         buf = StringIO()
@@ -220,6 +221,7 @@ class TestCLIAndMainLogic:
             min_scale=1000.0,
             fund_types="股票型基金",
             workers=2,
+            exclude_index=True,
         )
 
         buf = StringIO()
@@ -237,7 +239,7 @@ class TestCLIAndMainLogic:
         from io import StringIO
 
         df_list = pd.DataFrame([
-            {"基金代码": "510300", "基金简称": "沪深300ETF", "总募集规模": 3296860.0, "单位净值": 4.97},
+            {"基金代码": "510300", "基金简称": "沪深300精选", "总募集规模": 3296860.0, "单位净值": 4.97},
             {"基金代码": "070011", "基金简称": "嘉实策略", "总募集规模": 4191700.0, "单位净值": 0.916},
         ])
         mock_ak.fund_scale_open_sina.side_effect = lambda symbol: df_list.copy() if symbol == "股票型基金" else pd.DataFrame()
@@ -257,6 +259,7 @@ class TestCLIAndMainLogic:
             min_scale=10.0,
             fund_types="股票型基金",
             workers=2,
+            exclude_index=True,
         )
 
         buf = StringIO()
@@ -290,9 +293,10 @@ class TestFundListFetch:
         mock_ak.fund_scale_open_sina.side_effect = [df_equity, df_mixed]
 
         result = fund_holdings.fetch_fund_list(["股票型基金", "混合型基金"])
-        assert len(result) == 4  # 5 - 1 重复
+        # 沪深300ETF 被指数过滤规则排除，央企ETF 无数字保留
+        assert len(result) == 3
         codes = [f["基金代码"] for f in result]
-        assert codes.count("999999") == 1  # 只出现一次
+        assert codes.count("999999") == 1
 
     @patch("fund_holdings.ak")
     def test_filter_by_min_scale(self, mock_ak):
@@ -324,6 +328,41 @@ class TestFundListFetch:
         codes = [f["基金代码"] for f in result]
         assert "000001" not in codes
         assert "000002" in codes
+
+    def test_exclude_index_funds(self):
+        """验证指数/ETF/联接/增强基金被排除
+        规则: 1)数字+ETF 2)ETF+联接 3)含指数 4)含增强
+        """
+        # 应排除的
+        # 规则1: 数字+ETF
+        assert fund_holdings.is_index_fund("华夏沪深300ETF") == True
+        assert fund_holdings.is_index_fund("沪深300ETF工银") == True
+        assert fund_holdings.is_index_fund("广发中证500ETF") == True
+        # 规则2: ETF+联接 (ETF和联接之间可能有其他字符)
+        assert fund_holdings.is_index_fund("华夏沪深300ETF联接A") == True
+        assert fund_holdings.is_index_fund("广发中证500ETF联接(LOF)A") == True
+        # 规则3: 含"指数"
+        assert fund_holdings.is_index_fund("银华中债1-3年国开行债券指数A") == True
+        # 规则4: 含"增强"
+        assert fund_holdings.is_index_fund("易方达上证50增强A") == True
+        assert fund_holdings.is_index_fund("诺安沪深300增强A") == True
+        assert fund_holdings.is_index_fund("嘉实成长增强混合") == True
+        assert fund_holdings.is_index_fund("易方达沪深300精选增强A") == True
+
+        # 应保留的
+        assert fund_holdings.is_index_fund("广发稳泰多元机遇三个月持有混合(ETF-FOF)A") == False
+        assert fund_holdings.is_index_fund("嘉实策略混合") == False
+        assert fund_holdings.is_index_fund("博时央企结构调整ETF") == False  # 无数字, 非联接
+        assert fund_holdings.is_index_fund("央企ETF工银") == False  # 无数字
+
+    def test_exclude_index_disabled(self):
+        """排除功能关闭时不过滤"""
+        funds = [
+            {"基金代码": "510300", "基金简称": "沪深300ETF", "总募集规模": 3296860.0, "单位净值": 4.97},
+            {"基金代码": "070011", "基金简称": "嘉实策略", "总募集规模": 4191700.0, "单位净值": 0.916},
+        ]
+        result = fund_holdings.filter_index_funds(funds, exclude_index=False)
+        assert len(result) == 2
 
 
 class TestHoldingsFetch:

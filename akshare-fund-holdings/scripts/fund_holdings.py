@@ -13,8 +13,56 @@ import os
 from datetime import date, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+import re
 
 import akshare as ak
+
+
+# ---- 指数基金过滤 ----
+
+def is_index_fund(name: str) -> bool:
+    """判断基金简称是否为指数/ETF/联接/增强型基金
+
+    规则:
+    1. 数字+ETF (数字和ETF之间可能有其他字符)
+    2. ETF和联接同时出现 (ETF和联接之间可能有其他字符)
+    3. 含"指数"
+    4. 含"增强"
+
+    参数:
+        name: 基金简称
+
+    返回:
+        bool: 应排除返回 True
+    """
+    # 规则 1: 数字+ETF (数字和ETF之间可能有其他字符)
+    if re.search(r'\d.*ETF', name):
+        return True
+    # 规则 2: ETF和联接同时出现
+    if 'ETF' in name and '联接' in name:
+        return True
+    # 规则 3: 含"指数"
+    if '指数' in name:
+        return True
+    # 规则 4: 含"增强"
+    if '增强' in name:
+        return True
+    return False
+
+
+def filter_index_funds(funds: list[dict], exclude_index: bool = True) -> list[dict]:
+    """过滤指数/ETF/联接/增强型基金
+
+    参数:
+        funds: 基金列表
+        exclude_index: 是否启用过滤，默认 True
+
+    返回:
+        list[dict]: 过滤后的基金列表
+    """
+    if not exclude_index:
+        return funds
+    return [f for f in funds if not is_index_fund(f["基金简称"])]
 
 
 # ---- 季度推断 ----
@@ -160,12 +208,14 @@ def is_holdings_cache_valid(
 def fetch_fund_list(
     fund_types: list[str],
     min_scale_yi: float = 10.0,
+    exclude_index: bool = True,
 ) -> list[dict]:
     """拉取基金列表，去重，按规模过滤
 
     参数:
         fund_types: 基金类型列表，如 ["股票型基金", "混合型基金"]
         min_scale_yi: 最低总募集规模（亿元），默认 10
+        exclude_index: 是否排除指数/ETF/联接/增强基金，默认 True
 
     返回:
         list[dict]: 过滤后的基金列表，每个元素含基金代码和规模信息
@@ -201,6 +251,7 @@ def fetch_fund_list(
                 ),
             })
 
+    funds = filter_index_funds(funds, exclude_index)
     return funds
 
 
@@ -457,6 +508,7 @@ def main_with_args(args: argparse.Namespace) -> int:
     """主流程：基金列表 → 持仓拉取 → 聚合 → 输出"""
     fund_types = [t.strip() for t in args.fund_types.split(",")]
     min_scale_yi = float(args.min_scale)
+    exclude_index = args.exclude_index
 
     cache_dir = CACHE_BASE
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -475,7 +527,7 @@ def main_with_args(args: argparse.Namespace) -> int:
 
     if funds is None:
         try:
-            all_funds = fetch_fund_list(fund_types, min_scale_yi)
+            all_funds = fetch_fund_list(fund_types, min_scale_yi, exclude_index)
         except Exception as e:
             print(f"FATAL: Failed to fetch fund list: {e}", file=sys.stderr)
             return 2
@@ -547,6 +599,10 @@ def main() -> None:
     parser.add_argument(
         "--workers", type=int, default=8,
         help="并发 worker 数 (默认: 8)",
+    )
+    parser.add_argument(
+        "--no-exclude-index", dest="exclude_index", action="store_false",
+        help="不过滤指数/ETF/联接/增强基金",
     )
 
     args = parser.parse_args()
