@@ -2,13 +2,14 @@
 
 ## 概述
 
-基于 akshare `fund_open_fund_rank_em` API，获取东方财富网开放基金排行数据，包含基金代码、净值、多周期涨幅等信息。支持按基金类型筛选、按任意指标排序、取 Top N，以 JSON 输出，供 AI Agent 检索和分析基金表现。
+基于 akshare `fund_open_fund_rank_em` API，获取东方财富网开放基金排行数据，包含基金代码、净值、多周期涨幅等信息。支持按基金类型筛选、按多列数值过滤、按任意指标排序、取 Top N，以 JSON 输出，供 AI Agent 检索和分析基金表现。
 
 ## CLI 接口
 
 ```bash
 uv run python scripts/open_fund_rank.py \
   --symbol 全部 \
+  --filter 近1月>10 --filter 近1年>30 \
   --sort-by 近1年 \
   --order desc \
   --top-n 20 \
@@ -37,24 +38,52 @@ uv run python scripts/open_fund_rank.py \
 | `QDII` | QDII 基金 | ~220 |
 | `FOF` | FOF 基金 | ~980 |
 
+### `--filter`（可选，可重复，默认无）
+
+数值过滤条件。格式：`<列名><运算符><数值>`。可多次指定，条件之间为 AND 关系。
+
+**运算符**:
+
+| 运算符 | 含义 |
+|---|---|
+| `>` | 大于 |
+| `>=` | 大于等于 |
+| `<` | 小于 |
+| `<=` | 小于等于 |
+| `=` | 等于 |
+
+**示例**:
+
+```bash
+# 单条件：近1月涨幅大于10%
+--filter 近1月>10
+
+# 多条件AND：近1月>10% 且 近1年>30% 且 单位净值<=5
+--filter 近1月>10 --filter 近1年>30 --filter 单位净值<=5
+```
+
+- 过滤列的合法值与 `--sort-by` 完全一致（见上表）
+- 无此参数时不进行任何过滤，输出全部记录
+- NaN 值不满足任何过滤条件（包括 `>`、`<`、`=` 等），被自动排除
+
 ### `--sort-by`（可选，默认 `近1年`）
 
 排序字段。**合法值**:
 
-| 值 | 输出字段名 | 说明 |
-|---|---|---|
-| `日增长率` | `daily_return` | 日涨跌幅 |
-| `近1周` | `1w_return` | 近 1 周涨跌幅 |
-| `近1月` | `1m_return` | 近 1 月涨跌幅 |
-| `近3月` | `3m_return` | 近 3 月涨跌幅 |
-| `近6月` | `6m_return` | 近 6 月涨跌幅 |
-| `近1年` | `1y_return` | 近 1 年涨跌幅 |
-| `近2年` | `2y_return` | 近 2 年涨跌幅 |
-| `近3年` | `3y_return` | 近 3 年涨跌幅 |
-| `今年来` | `ytd_return` | 今年以来涨跌幅 |
-| `成立来` | `since_inception_return` | 成立以来涨跌幅 |
-| `单位净值` | `unit_net_value` | 单位净值 |
-| `累计净值` | `cumulative_net_value` | 累计净值 |
+| 值 | 输出字段名 | 单位 | 说明 |
+|---|---|---|---|
+| `日增长率` | `daily_return` | % | 日涨跌幅 |
+| `近1周` | `1w_return` | % | 近 1 周涨跌幅 |
+| `近1月` | `1m_return` | % | 近 1 月涨跌幅 |
+| `近3月` | `3m_return` | % | 近 3 月涨跌幅 |
+| `近6月` | `6m_return` | % | 近 6 月涨跌幅 |
+| `近1年` | `1y_return` | % | 近 1 年涨跌幅 |
+| `近2年` | `2y_return` | % | 近 2 年涨跌幅 |
+| `近3年` | `3y_return` | % | 近 3 年涨跌幅 |
+| `今年来` | `ytd_return` | % | 今年以来涨跌幅 |
+| `成立来` | `since_inception_return` | % | 成立以来涨跌幅 |
+| `单位净值` | `unit_net_value` | 元 | 单位净值 |
+| `累计净值` | `cumulative_net_value` | 元 | 累计净值 |
 
 ### `--order`（可选，默认 `desc`）
 
@@ -79,10 +108,18 @@ uv run python scripts/open_fund_rank.py \
 main()
   ├── parse_args()                           # argparse 解析参数
   ├── validate_args()                         # 校验参数合法性
+  │     ├── 校验 --symbol 合法值
+  │     ├── 校验 --sort-by 合法值
+  │     ├── 校验 --order 合法值
+  │     ├── 校验 --top-n 为正整数
+  │     ├── 校验 --output 合法值
+  │     └── 校验 --filter 格式（列名、运算符、数值）
   ├── df = ak.fund_open_fund_rank_em(symbol)  # 调用 API
   │     └── 失败 → exit(2)
   ├── rename columns                          # 中文列名 → 英文列名
   │     └── 仅保留 16 个输出字段
+  ├── apply_filters(df, filters)             # 逐条应用 filter 条件 (AND)
+  │     └── NaN 值视为不满足条件，自动排除
   ├── df = df.sort_values(sort_by, order)    # 排序
   ├── if top_n: df = df.head(top_n)          # 取 Top N
   └── output(df, format)                     # JSON 或 JSONL 输出到 stdout
@@ -94,24 +131,24 @@ main()
 
 ### 输出字段（共 16 列）
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `fund_code` | string | 基金代码 |
-| `fund_name` | string | 基金简称 |
-| `date` | string | 净值日期 (YYYY-MM-DD) |
-| `unit_net_value` | float/null | 单位净值 |
-| `cumulative_net_value` | float/null | 累计净值 |
-| `daily_return` | float/null | 日增长率 (%) |
-| `1w_return` | float/null | 近 1 周涨幅 (%) |
-| `1m_return` | float/null | 近 1 月涨幅 (%) |
-| `3m_return` | float/null | 近 3 月涨幅 (%) |
-| `6m_return` | float/null | 近 6 月涨幅 (%) |
-| `1y_return` | float/null | 近 1 年涨幅 (%) |
-| `2y_return` | float/null | 近 2 年涨幅 (%) |
-| `3y_return` | float/null | 近 3 年涨幅 (%) |
-| `ytd_return` | float/null | 今年以来涨幅 (%) |
-| `since_inception_return` | float/null | 成立来涨幅 (%) |
-| `fee` | string | 手续费 (如 `0.15%`) |
+| 字段 | 类型 | 单位 | 说明 |
+|---|---|---|---|
+| `fund_code` | string | - | 基金代码 |
+| `fund_name` | string | - | 基金简称 |
+| `date` | string | - | 净值日期 (YYYY-MM-DD) |
+| `unit_net_value` | float/null | 元 | 单位净值 |
+| `cumulative_net_value` | float/null | 元 | 累计净值 |
+| `daily_return` | float/null | % | 日增长率 |
+| `1w_return` | float/null | % | 近 1 周涨幅 |
+| `1m_return` | float/null | % | 近 1 月涨幅 |
+| `3m_return` | float/null | % | 近 3 月涨幅 |
+| `6m_return` | float/null | % | 近 6 月涨幅 |
+| `1y_return` | float/null | % | 近 1 年涨幅 |
+| `2y_return` | float/null | % | 近 2 年涨幅 |
+| `3y_return` | float/null | % | 近 3 年涨幅 |
+| `ytd_return` | float/null | % | 今年以来涨幅 |
+| `since_inception_return` | float/null | % | 成立来涨幅 |
+| `fee` | string | - | 手续费 (如 `0.15%`) |
 
 - **NaN 处理**: API 返回的 NaN 统一输出为 JSON `null`
 - **去掉的列**: `序号`（无业务意义）、`自定义`（空列）
@@ -142,6 +179,7 @@ main()
 ```
 [INFO] 正在获取开放基金排行: symbol=全部
 [INFO] 获取到 19747 条记录
+[INFO] 应用过滤条件: 近1月>10, 近1年>30; 过滤后 2841 条
 [INFO] 按 近1年 降序排列, 取前 20 条
 [INFO] 输出: jsonl 格式, 20 条记录
 [INFO] 完成
@@ -156,8 +194,10 @@ main()
 | `--order` 非法值 | stderr 输出合法值 (`desc`/`asc`)，exit code 2 |
 | `--top-n` 非正整数 | stderr 提示须为正整数，exit code 2 |
 | `--output` 非法值 | stderr 输出合法值 (`jsonl`/`json`)，exit code 2 |
+| `--filter` 格式非法 | stderr 输出格式说明 + 合法运算符列表，exit code 2 |
 | API 调用超时/网络错误 | stderr 输出错误原因，exit code 2 |
 | API 返回空 DataFrame | stderr 提示无数据，stdout 输出 `[]` 或空行，exit code 1 |
+| 过滤后无数据 | stdout 输出 `[]` 或空行，stderr 提示过滤后为 0 条，exit code 1 |
 | `top_n` > 实际记录数 | 输出全部记录，stderr 提示实际数量 |
 
 ## 文件结构
@@ -179,6 +219,9 @@ akshare-open-fund-rank/
 ### 单元测试（mock akshare API）
 
 - 参数校验：合法值通过，非法值报错
+- `--filter` 格式解析：列名、运算符、数值提取正确
+- `--filter` 多条件 AND 过滤正确
+- `--filter` NaN 值被排除
 - 列重命名：中文列名 → 英文列名映射正确
 - NaN → null 转换正确
 - 排序逻辑：desc/asc 均正确
@@ -203,7 +246,7 @@ uv pip install akshare pandas
 
 - 无缓存（每次实时查询）
 - 无分页
-- 无多条件组合筛选（AND/OR）
+- 无 OR 组合过滤（仅支持 AND）
 - 无自定义收益计算
 
 ## 使用示例
@@ -217,6 +260,12 @@ uv run python scripts/open_fund_rank.py --symbol 股票型 --sort-by 近3月 --t
 
 # 获取债券型基金，按单位净值升序排列
 uv run python scripts/open_fund_rank.py --symbol 债券型 --sort-by 单位净值 --order asc
+
+# 筛选近1月>10%且近1年>30%的基金，按近1年降序，取前20
+uv run python scripts/open_fund_rank.py --filter 近1月>10 --filter 近1年>30 --top-n 20
+
+# 筛选单位净值<=5的股票型基金，按日增长率降序
+uv run python scripts/open_fund_rank.py --symbol 股票型 --filter 单位净值<=5 --sort-by 日增长率
 
 # 输出 JSON 数组格式
 uv run python scripts/open_fund_rank.py --symbol QDII --output json
