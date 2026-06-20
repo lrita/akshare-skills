@@ -355,11 +355,19 @@ def aggregate_holdings(
     stock_agg: dict[str, dict] = {}
     quarterly: dict[str, dict] = {}
 
+    # 确定最新季度（用于排序）
+    all_quarters: set[str] = set()
+    for holdings in all_holdings.values():
+        for info in holdings.values():
+            all_quarters.update(info.get("quarters", {}).keys())
+    latest_quarter = max(all_quarters) if all_quarters else ""
+
     for fund_code, holdings in all_holdings.items():
         for stock_code, info in holdings.items():
             if stock_code not in stock_agg:
                 stock_agg[stock_code] = {
                     "total_amount": 0.0,
+                    "latest_amount": 0.0,
                     "fund_count": 0,
                     "stock_name": info["stock_name"],
                 }
@@ -368,6 +376,8 @@ def aggregate_holdings(
 
             for q, amt in info.get("quarters", {}).items():
                 stock_agg[stock_code]["total_amount"] += amt
+                if q == latest_quarter:
+                    stock_agg[stock_code]["latest_amount"] += amt
 
                 if q not in quarterly[stock_code]:
                     quarterly[stock_code][q] = {"amount": 0.0, "fund_count": 0}
@@ -376,7 +386,7 @@ def aggregate_holdings(
 
     sorted_stocks = sorted(
         stock_agg.items(),
-        key=lambda x: x[1]["total_amount"],
+        key=lambda x: x[1]["latest_amount"],
         reverse=True,
     )
     top = sorted_stocks[:top_n]
@@ -386,6 +396,7 @@ def aggregate_holdings(
             "rank": i + 1,
             "stock_code": code,
             "stock_name": info["stock_name"],
+            "latest_holding_amount": info["latest_amount"],
             "total_holding_amount": info["total_amount"],
             "fund_count": info["fund_count"],
             "quarterly_trend": [
