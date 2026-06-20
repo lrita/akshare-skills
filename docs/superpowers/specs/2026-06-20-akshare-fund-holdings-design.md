@@ -11,12 +11,11 @@ uv run python scripts/fund_holdings.py \
   --top-n 100 \           # TopN 股票数，默认 100
   --min-scale 10.0 \      # 最低募集规模(亿元)，默认 10
   --fund-types 股票型基金,混合型基金 \  # 基金类型，默认两者
-  --workers 8 \           # 并发数，默认 8
-  --no-cache \            # 禁用缓存
-  --cache-ttl 168         # 基金列表缓存 TTL(小时)，默认 168（7 天）
+  --workers 8             # 并发数，默认 8
 ```
 
 - JSON 输出到 stdout，日志/进度到 stderr
+- **始终使用缓存**：自动按策略判断缓存有效性，无需手动指定
 - exit code: 0 成功, 1 参数错误/无数据, 2 基金列表 API 不可用
 
 ## 核心流程
@@ -39,8 +38,10 @@ uv run python scripts/fund_holdings.py \
 
 - 自动推断最近 4 个有数据的季度（如当前为 2026 年 6 月 → 2026 + 2025 两年数据，取最新的 4 个季度）
 - 判断是否需要请求：若缓存中已有最新可用季度数据则跳过（按季度披露窗口智能过期）
-- 最多重试 3 次（指数退避 2s/4s/8s），失败记入 errors 数组
-- 缓存到 `~/.cache/akshare-fund-holdings/holdings/{基金代码}.json`
+- 最多重试 3 次（指数退避 2s/4s/8s）
+- 请求成功：持仓数据写入缓存 `holdings/{基金代码}.json`，失败记录写入缓存 `failures.json`
+- **失败重试机制**：每次运行时会读取 `failures.json` 中之前失败的基金，重新尝试拉取并更新缓存；成功后从 failures 中移除
+- 本次运行失败的基金记录在输出 `errors` 中，同时写入 `failures.json` 供下次重试
 - 并发：`ThreadPoolExecutor(max_workers=8)`，每次请求前随机 sleep 0.3-0.8s
 
 ### 3. 聚合计算
@@ -104,10 +105,11 @@ uv run python scripts/fund_holdings.py \
 
 ## 缓存策略
 
-| 缓存 | 路径 | TTL | 说明 |
+| 缓存 | 路径 | 过期策略 | 说明 |
 |---|---|---|---|
 | 基金列表 | `~/.cache/akshare-fund-holdings/fund_list.json` | 7 天 | 新基金发行不频繁 |
 | 持仓数据 | `~/.cache/akshare-fund-holdings/holdings/{基金代码}.json` | 按季度智能过期 | 下次披露窗口前不重新请求 |
+| 失败记录 | `~/.cache/akshare-fund-holdings/failures.json` | 持久保留 | 记录拉取失败的基金代码+失败原因，每次运行自动重试 |
 
 缓存智能过期：读取缓存中最新的季度，若该季度已是"当前可获取的最新季度"，则缓存有效；否则到下一季度的披露窗口后才重新拉取。
 
@@ -116,10 +118,11 @@ uv run python scripts/fund_holdings.py \
 | 场景 | 处理 |
 |---|---|
 | 基金列表 API 失败 | 终止执行，stderr 输出错误，exit code 2 |
-| 单只基金持仓 API 失败 | 记入 errors 数组，继续处理其他基金 |
+| 单只基金持仓 API 失败 | 记入 errors 数组和 `failures.json`，继续处理其他基金 |
 | 某基金某年份无数据 | 正常，有多少季度用多少季度 |
 | 某季度无持仓数据 | 跳过该基金该季度，不报错 |
 | 全部基金持仓拉取失败 | 输出空结果 + 完整 errors，exit code 0 |
+| 之前失败的基金本次成功 | 从 `failures.json` 中移除 |
 | min_scale 过高导致 0 只基金 | 输出警告，exit code 1 |
 | 缓存文件损坏 | 删除损坏文件，重新拉取 |
 | `持仓市值` / `总募集规模` 为 NaN | 持仓市值当 0 处理；总募集规模为 NaN 排除该基金 |
