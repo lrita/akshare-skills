@@ -40,7 +40,9 @@ class TestCLI:
             with patch.object(sys, "argv", ["fetch_realtime.py", "quote", "--symbol", "600183"]):
                 stdout = io.StringIO()
                 with patch.object(sys, "stdout", stdout):
-                    fetch_realtime.main()
+                    with pytest.raises(SystemExit) as exc_info:
+                        fetch_realtime.main()
+        assert exc_info.value.code == 0
 
         output = json.loads(stdout.getvalue())
         assert output["股票代码"] == "600183"
@@ -64,7 +66,9 @@ class TestCLI:
                 "--output", str(out_file),
             ]
             with patch.object(sys, "argv", test_args):
-                fetch_realtime.main()
+                with pytest.raises(SystemExit) as exc_info:
+                    fetch_realtime.main()
+        assert exc_info.value.code == 0
 
         assert out_file.exists()
         content = json.loads(out_file.read_text(encoding="utf-8"))
@@ -109,7 +113,9 @@ class TestCLI:
             with patch.object(sys, "argv", test_args):
                 stdout = io.StringIO()
                 with patch.object(sys, "stdout", stdout):
-                    fetch_realtime.main()
+                    with pytest.raises(SystemExit) as exc_info:
+                        fetch_realtime.main()
+        assert exc_info.value.code == 0
 
         output = json.loads(stdout.getvalue())
         assert output["股票代码"] == "600183"
@@ -131,7 +137,9 @@ class TestCLI:
             with patch.object(sys, "argv", test_args):
                 stdout = io.StringIO()
                 with patch.object(sys, "stdout", stdout):
-                    fetch_realtime.main()
+                    with pytest.raises(SystemExit) as exc_info:
+                        fetch_realtime.main()
+        assert exc_info.value.code == 1
 
         output = json.loads(stdout.getvalue())
         assert output["股票代码"] == "600183"

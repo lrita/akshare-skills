@@ -185,3 +185,104 @@ def fetch_intraday_minute(code: str) -> dict:
         "交易日期": trading_date,
         "分钟K线": minutes,
     }
+
+
+def _validate_symbol(symbol: str) -> str:
+    """校验股票代码为 6 位纯数字。
+
+    Args:
+        symbol: 股票代码字符串
+
+    Returns:
+        str: 校验通过的代码
+
+    Raises:
+        SystemExit: 格式非法时 exit(2)
+    """
+    if not symbol.isdigit() or len(symbol) != 6:
+        print(
+            f"[ERROR] 股票代码格式非法: {symbol}，应为6位纯数字",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    return symbol
+
+
+def _write_output(data: dict, output_path: str | None) -> None:
+    """将 dict 序列化为 JSON 输出到 stdout 或文件。
+
+    Args:
+        data: 要输出的数据
+        output_path: 为 None 输出到 stdout，否则写入文件
+    """
+    json_str = json.dumps(data, ensure_ascii=False, indent=2, default=str)
+    if output_path:
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(json_str)
+                f.write("\n")
+        except Exception as e:
+            print(f"[ERROR] 写入输出文件失败: {e}", file=sys.stderr)
+            sys.stdout.write(json_str)
+            sys.stdout.write("\n")
+    else:
+        sys.stdout.write(json_str)
+        sys.stdout.write("\n")
+    sys.stdout.flush()
+
+
+def cmd_quote(args: argparse.Namespace) -> int:
+    """quote 子命令：获取实时行情快照（含盘口）。"""
+    symbol = _validate_symbol(args.symbol)
+    result = fetch_tencent_quote_verbose(symbol)
+    if not result:
+        result = {"股票代码": symbol, "股票名称": "", "行情更新时间": "",
+                   "行情数据": {}, "成交数据": {}, "盘口数据": {}, "估值数据": {}}
+    _write_output(result, args.output)
+    return 0 if result.get("行情数据") else 1
+
+
+def cmd_intraday(args: argparse.Namespace) -> int:
+    """intraday 子命令：获取日内分钟K线。"""
+    symbol = _validate_symbol(args.symbol)
+    result = fetch_intraday_minute(symbol)
+    if not result:
+        result = {"股票代码": symbol, "股票名称": "", "交易日期": "",
+                   "分钟K线": []}
+    _write_output(result, args.output)
+    return 0 if result.get("分钟K线") is not None else 1
+
+
+def parse_args() -> argparse.Namespace:
+    """解析命令行参数。"""
+    parser = argparse.ArgumentParser(
+        description="获取A股实时行情与日内分钟K线数据",
+    )
+    subparsers = parser.add_subparsers(dest="command")
+
+    p_quote = subparsers.add_parser("quote", help="获取实时行情快照（含盘口）")
+    p_quote.add_argument("--symbol", required=True, help="股票代码，纯数字，如 600183")
+    p_quote.add_argument("--output", default=None, help="输出 JSON 文件路径，默认 stdout")
+    p_quote.set_defaults(func=cmd_quote)
+
+    p_intraday = subparsers.add_parser("intraday", help="获取日内分钟K线")
+    p_intraday.add_argument("--symbol", required=True, help="股票代码，纯数字，如 600183")
+    p_intraday.add_argument("--output", default=None, help="输出 JSON 文件路径，默认 stdout")
+    p_intraday.set_defaults(func=cmd_intraday)
+
+    args = parser.parse_args()
+    if not args.command:
+        parser.print_help()
+        sys.exit(2)
+    return args
+
+
+def main() -> None:
+    """CLI 入口。"""
+    args = parse_args()
+    exit_code = args.func(args)
+    sys.exit(exit_code)
+
+
+if __name__ == "__main__":
+    main()
