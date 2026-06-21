@@ -425,3 +425,124 @@ def fetch_revenue_structure(code: str, date_str: str) -> list[dict]:
     except Exception:
         return []
     return _safe_df_to_records(df, date_str, years=3)
+
+
+def _filter_by_date_cutoff(records: list[dict], date_str: str, date_key: str, years: int) -> list[dict]:
+    """按日期截取最近 N 年记录，保留无日期和解析失败的记录。
+
+    Args:
+        records: 原始记录列表
+        date_str: 基准日期 YYYYMMDD
+        date_key: 日期字段名
+        years: 年数
+
+    Returns:
+        list[dict]
+    """
+    cutoff = datetime.strptime(date_str, "%Y%m%d") - timedelta(days=years * 365)
+    filtered = []
+    for r in records:
+        date_val = r.get(date_key, "")
+        if not date_val:
+            filtered.append(r)
+            continue
+        try:
+            rd = datetime.strptime(str(date_val)[:10], "%Y-%m-%d")
+            if rd >= cutoff:
+                filtered.append(r)
+        except ValueError:
+            filtered.append(r)
+    return filtered
+
+
+def fetch_block_trades(code: str, date_str: str) -> list[dict]:
+    """获取近30日大宗交易明细，按股票代码过滤。
+
+    Args:
+        code: 股票代码
+        date_str: 基准日期 YYYYMMDD
+
+    Returns:
+        list[dict], 失败返回空列表
+    """
+    if ak is None:
+        return []
+    end_date = datetime.strptime(date_str, "%Y%m%d")
+    start_date = end_date - timedelta(days=30)
+    try:
+        df = ak.stock_dzjy_mrmx(
+            symbol="A股",
+            start_date=start_date.strftime("%Y%m%d"),
+            end_date=end_date.strftime("%Y%m%d"),
+        )
+    except Exception:
+        return []
+    if df is None or df.empty:
+        return []
+    records = df.to_dict(orient="records")
+    return [r for r in records if str(r.get("股票代码", "")) == code]
+
+
+def fetch_restricted_release_em(code: str, date_str: str) -> list[dict]:
+    """从东财获取限售解禁数据，保留近2年+未执行计划。
+
+    Args:
+        code: 股票代码
+        date_str: 基准日期 YYYYMMDD
+
+    Returns:
+        list[dict], 失败返回空列表
+    """
+    if ak is None:
+        return []
+    try:
+        df = ak.stock_restricted_release_queue_em(symbol=code)
+    except Exception:
+        return []
+    if df is None or df.empty:
+        return []
+    records = df.to_dict(orient="records")
+    return _filter_by_date_cutoff(records, date_str, "解禁日期", years=2)
+
+
+def fetch_restricted_release_sina(code: str, date_str: str) -> list[dict]:
+    """从新浪获取限售解禁数据，保留近2年+未执行计划。
+
+    Args:
+        code: 股票代码
+        date_str: 基准日期 YYYYMMDD
+
+    Returns:
+        list[dict], 失败返回空列表
+    """
+    if ak is None:
+        return []
+    try:
+        df = ak.stock_restricted_release_queue_sina(symbol=code)
+    except Exception:
+        return []
+    if df is None or df.empty:
+        return []
+    records = df.to_dict(orient="records")
+    return _filter_by_date_cutoff(records, date_str, "解禁日期", years=2)
+
+
+def fetch_pledge(code: str) -> list[dict]:
+    """获取股权质押明细，仅保留"未解押"状态。
+
+    Args:
+        code: 股票代码
+
+    Returns:
+        list[dict], 失败返回空列表
+    """
+    if ak is None:
+        return []
+    try:
+        df = ak.stock_gpzy_individual_pledge_ratio_detail_em(symbol=code)
+    except Exception:
+        return []
+    if df is None or df.empty:
+        return []
+    records = df.to_dict(orient="records")
+    return [r for r in records if r.get("质押状态", "") == "未解押"]
