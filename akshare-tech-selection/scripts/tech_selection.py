@@ -5,6 +5,7 @@
 支持 4 种工作模式：single / intersect / scan / full
 """
 import sys
+import os
 import json
 import argparse
 from datetime import date, datetime, time
@@ -13,8 +14,7 @@ from datetime import date, datetime, time
 # akshare uses tqdm progress bars that write to stderr, which can cause
 # subprocess hangs in certain environments (e.g. CI, background shells).
 # This must execute BEFORE importing engine (which imports fetcher → akshare).
-import os as _os
-_os.environ.setdefault("TQDM_DISABLE", "1")
+os.environ.setdefault("TQDM_DISABLE", "1")
 try:
     import tqdm as _tqdm_module
     _original_tqdm_init = _tqdm_module.tqdm.__init__
@@ -170,8 +170,8 @@ def main() -> None:
     succeeded = result.get("succeeded_indicators", 0)
 
     if failed and succeeded == 0:
-        sys.exit(1)
-    sys.exit(0)
+        os._exit(1)
+    os._exit(0)
 
 
 if __name__ == "__main__":
