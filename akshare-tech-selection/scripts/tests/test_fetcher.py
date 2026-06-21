@@ -146,3 +146,56 @@ class TestStockCodeCompatibility:
             "fetch_test", "测试", ["测试"],
         )
         assert result["data"][0]["stock_code"] == "301669"
+
+class TestAntiCrawlCheck:
+    """测试 _check_thx_blocked 反爬检测"""
+
+    def test_http_403_triggers_exit(self, monkeypatch):
+        """HTTP 403 应触发 os._exit(1)"""
+        import fetcher as ft
+
+        class MockResponse:
+            status_code = 403
+            text = ""
+
+        monkeypatch.setattr("os._exit", lambda code: (_ for _ in ()).throw(SystemExit(code)))
+        with pytest.raises(SystemExit) as excinfo:
+            ft._check_thx_blocked(MockResponse(), "test_api")
+        assert excinfo.value.code == 1
+
+    def test_captcha_page_triggers_exit(self, monkeypatch):
+        """验证页面应触发 os._exit(1)"""
+        import fetcher as ft
+
+        class MockResponse:
+            status_code = 200
+            text = "请在下方输入验证码"
+
+        monkeypatch.setattr("os._exit", lambda code: (_ for _ in ()).throw(SystemExit(code)))
+        with pytest.raises(SystemExit) as excinfo:
+            ft._check_thx_blocked(MockResponse(), "test_api")
+        assert excinfo.value.code == 1
+
+    def test_short_response_triggers_exit(self, monkeypatch):
+        """短响应（<200字符）应被视为异常页面"""
+        import fetcher as ft
+
+        class MockResponse:
+            status_code = 200
+            text = "short"
+
+        monkeypatch.setattr("os._exit", lambda code: (_ for _ in ()).throw(SystemExit(code)))
+        with pytest.raises(SystemExit) as excinfo:
+            ft._check_thx_blocked(MockResponse(), "test_api")
+        assert excinfo.value.code == 1
+
+    def test_normal_response_passes_through(self):
+        """正常 HTML 页面不应触发 exit"""
+        import fetcher as ft
+
+        class MockResponse:
+            status_code = 200
+            text = "<html><body>" + "x" * 200 + "</body></html>"
+
+        # 不应该抛出异常
+        ft._check_thx_blocked(MockResponse(), "test_api")
