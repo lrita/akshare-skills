@@ -80,12 +80,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="只返回前 N 条结果，默认全量",
     )
     parser.add_argument(
-        "--workers",
-        type=int,
-        default=8,
-        help="并发数，默认 8",
-    )
-    parser.add_argument(
         "--output",
         help="输出 JSON 文件路径，默认 stdout",
     )
@@ -130,7 +124,7 @@ def main() -> None:
         # so for intersect we pass date and max_workers; the symbols dict
         # is not directly supported by the engine for intersect mode
         result = engine.run_intersect(
-            indicators, date=args.date, max_workers=args.workers,
+            indicators, date=args.date,
         )
         if args.top_n and result["data"]:
             result["data"] = result["data"][:args.top_n]
@@ -141,7 +135,6 @@ def main() -> None:
             date=args.date,
             signal_threshold=args.signal_threshold,
             top_n=args.top_n,
-            max_workers=args.workers,
         )
 
     elif args.mode == "full":
@@ -149,7 +142,6 @@ def main() -> None:
             date=args.date,
             signal_threshold=args.signal_threshold,
             top_n=args.top_n,
-            max_workers=args.workers,
         )
 
     else:
