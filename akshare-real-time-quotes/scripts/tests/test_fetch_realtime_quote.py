@@ -1,11 +1,9 @@
 """fetch_tencent_quote_verbose 单元测试 (mock HTTP)"""
-import json
 import sys
 import os
 import urllib.request
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from unittest.mock import patch, Mock
-import pytest
 import fetch_realtime
 
 
@@ -177,7 +175,7 @@ class TestFetchTencentQuoteVerbose:
         """0 开头股票使用 sz 前缀"""
         mock_resp = Mock()
         mock_resp.read.return_value = (
-            'v_sz000001="' + "~".join(["1", "平安银行", "000001"] + ["0"] * 50) + '";\n'
+            'v_sz000001="' + "~".join(["1", "平安银行", "000001"] + [""] * 50) + '";\n'
         ).encode("gbk")
         mock_resp.__enter__ = Mock(return_value=mock_resp)
         mock_resp.__exit__ = Mock(return_value=False)
@@ -186,3 +184,31 @@ class TestFetchTencentQuoteVerbose:
             result = fetch_realtime.fetch_tencent_quote_verbose("000001")
         assert result["股票代码"] == "000001"
         assert result["股票名称"] == "平安银行"
+
+    def test_prefixed_code_sz_for_3xx(self):
+        """3 开头股票使用 sz 前缀"""
+        mock_resp = Mock()
+        mock_resp.read.return_value = (
+            'v_sz300750="' + "~".join(["1", "宁德时代", "300750"] + [""] * 50) + '";\n'
+        ).encode("gbk")
+        mock_resp.__enter__ = Mock(return_value=mock_resp)
+        mock_resp.__exit__ = Mock(return_value=False)
+
+        with patch.object(urllib.request, "urlopen", return_value=mock_resp):
+            result = fetch_realtime.fetch_tencent_quote_verbose("300750")
+        assert result["股票代码"] == "300750"
+        assert result["股票名称"] == "宁德时代"
+
+    def test_prefixed_code_bj_for_8xx(self):
+        """8 开头股票使用 bj 前缀"""
+        mock_resp = Mock()
+        mock_resp.read.return_value = (
+            'v_bj830799="' + "~".join(["1", "艾融软件", "830799"] + [""] * 50) + '";\n'
+        ).encode("gbk")
+        mock_resp.__enter__ = Mock(return_value=mock_resp)
+        mock_resp.__exit__ = Mock(return_value=False)
+
+        with patch.object(urllib.request, "urlopen", return_value=mock_resp):
+            result = fetch_realtime.fetch_tencent_quote_verbose("830799")
+        assert result["股票代码"] == "830799"
+        assert result["股票名称"] == "艾融软件"
