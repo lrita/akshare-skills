@@ -289,6 +289,78 @@ class TestRunScan:
         assert len(summary["top_signals"]) == 2
 
 
+class TestCLIParsing:
+    """测试 CLI 参数解析逻辑（不实际执行 main）"""
+
+    def test_parse_single_mode(self):
+        from tech_selection import parse_args
+        args = parse_args(["--mode", "single", "--indicator", "fetch_lxsz_ths"])
+        assert args.mode == "single"
+        assert args.indicator == "fetch_lxsz_ths"
+
+    def test_parse_intersect_mode(self):
+        from tech_selection import parse_args
+        args = parse_args([
+            "--mode", "intersect",
+            "--indicator", "fetch_lxsz_ths,fetch_cxfl_ths",
+        ])
+        assert args.mode == "intersect"
+        assert args.indicator == "fetch_lxsz_ths,fetch_cxfl_ths"
+
+    def test_parse_with_date(self):
+        from tech_selection import parse_args
+        args = parse_args([
+            "--mode", "scan",
+            "--date", "20260620",
+        ])
+        assert args.date == "20260620"
+
+    def test_parse_with_symbol(self):
+        from tech_selection import parse_args
+        args = parse_args([
+            "--mode", "single",
+            "--indicator", "fetch_cxg_ths",
+            "--symbol", "fetch_cxg_ths=一年新高",
+        ])
+        assert len(args.symbol) == 1
+        assert args.symbol[0] == "fetch_cxg_ths=一年新高"
+
+    def test_parse_multiple_symbols(self):
+        from tech_selection import parse_args
+        args = parse_args([
+            "--mode", "intersect",
+            "--indicator", "fetch_cxg_ths,fetch_xstp_ths",
+            "--symbol", "fetch_cxg_ths=一年新高",
+            "--symbol", "fetch_xstp_ths=60日均线",
+        ])
+        assert len(args.symbol) == 2
+
+    def test_parse_signal_threshold_default(self):
+        from tech_selection import parse_args
+        args = parse_args(["--mode", "scan"])
+        assert args.signal_threshold == 1
+
+    def test_parse_signal_threshold_custom(self):
+        from tech_selection import parse_args
+        args = parse_args(["--mode", "scan", "--signal-threshold", "5"])
+        assert args.signal_threshold == 5
+
+    def test_parse_top_n(self):
+        from tech_selection import parse_args
+        args = parse_args(["--mode", "scan", "--top-n", "50"])
+        assert args.top_n == 50
+
+    def test_parse_workers_default(self):
+        from tech_selection import parse_args
+        args = parse_args(["--mode", "scan"])
+        assert args.workers == 8
+
+    def test_parse_with_output(self):
+        from tech_selection import parse_args
+        args = parse_args(["--mode", "scan", "--output", "result.json"])
+        assert args.output == "result.json"
+
+
 class TestRunFull:
     def test_has_detailed_signal_summary(self, monkeypatch):
         import fetcher as ft
