@@ -7,9 +7,9 @@
 import time
 import random
 from datetime import date, datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import fetcher
+from ratelimit import _RATE_LIMITER
 
 
 # ---- 工具 ----
@@ -32,31 +32,25 @@ def _call_fetcher(ind_name: str, symbol: str | None = None, date: str | None = N
         return ind_name, None, {"indicator": ind_name, "error": str(e), "api": ind_name}
 
 
-def _call_fetchers_concurrent(
+def _call_fetchers_sequential(
     ind_names: list[str],
     symbols: dict[str, str] | None = None,
     date: str | None = None,
-    max_workers: int = 8,
 ):
-    """并发调用多个 fetcher，返回 (results_dict, errors_list)"""
+    """顺序调用多个 fetcher（受全局 RateLimiter 管控），返回 (results_dict, errors_list)"""
     if symbols is None:
         symbols = {}
     results = {}
     errors = []
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {}
-        for ind_name in ind_names:
-            sym = symbols.get(ind_name)
-            time.sleep(random.uniform(0.1, 0.3))
-            futures[executor.submit(_call_fetcher, ind_name, sym, date)] = ind_name
-
-        for future in as_completed(futures):
-            ind_name, result, error = future.result()
-            if error:
-                errors.append(error)
-            if result:
-                results[ind_name] = result
+    for ind_name in ind_names:
+        _RATE_LIMITER.acquire()
+        sym = symbols.get(ind_name)
+        ind_name, result, error = _call_fetcher(ind_name, sym, date)
+        if error:
+            errors.append(error)
+        if result:
+            results[ind_name] = result
 
     return results, errors
 
@@ -88,6 +82,7 @@ def run_single(
             count = result.get("count", len(data))
             errors = []
     else:
+        _RATE_LIMITER.acquire()
         ind_name, result, error = _call_fetcher(indicator, symbol=symbol, date=date)
         errors = [error] if error else []
         if result:
@@ -114,10 +109,9 @@ def run_intersect(
     indicators: list[str],
     symbol: str | None = None,
     date: str | None = None,
-    max_workers: int = 8,
 ) -> dict:
     """多指标交集查询"""
-    results, errors = _call_fetchers_concurrent(indicators, date=date, max_workers=max_workers)
+    results, errors = _call_fetchers_sequential(indicators, date=date)
 
     indicator_counts = {}
     for ind_name in indicators:
@@ -191,13 +185,12 @@ def run_intersect(
 def run_scan(
     symbol: str | None = None,
     date: str | None = None,
-    max_workers: int = 8,
     signal_threshold: int = 1,
     top_n: int | None = None,
 ) -> dict:
     """全量扫描: 遍历 ALL_INDICATORS，按 stock_code 聚合信号"""
     ind_names = [ind["name"] for ind in fetcher.ALL_INDICATORS]
-    results, errors = _call_fetchers_concurrent(ind_names, date=date, max_workers=max_workers)
+    results, errors = _call_fetchers_sequential(ind_names, date=date)
 
     # 构建每个 indicator 的元信息
     ind_meta = {ind["name"]: ind for ind in fetcher.ALL_INDICATORS}
@@ -291,13 +284,12 @@ def run_scan(
 def run_full(
     symbol: str | None = None,
     date: str | None = None,
-    max_workers: int = 8,
     signal_threshold: int = 1,
     top_n: int | None = None,
 ) -> dict:
     """全量扫描(详细版): 与 scan 类似，但 signal_summary 包含每个指标的详细健康状况"""
     ind_names = [ind["name"] for ind in fetcher.ALL_INDICATORS]
-    results, errors = _call_fetchers_concurrent(ind_names, date=date, max_workers=max_workers)
+    results, errors = _call_fetchers_sequential(ind_names, date=date)
 
     # 构建每个 indicator 的元信息
     ind_meta = {ind["name"]: ind for ind in fetcher.ALL_INDICATORS}
