@@ -71,13 +71,39 @@ class TestRealAPI:
         assert "data" in data
         assert "errors" in data
 
+    def test_single_mode_with_date(self):
+        """验证带 date 参数的 single 模式"""
+        rc, stdout, stderr = run_cli(
+            "--mode", "single",
+            "--indicator", "fetch_lxsz_ths",
+            "--date", "20260620",
+            timeout=120,
+        )
+        assert rc in (0, 1)
+        data = json.loads(stdout)
+        assert data["mode"] == "single"
+        assert data["params"].get("date") == "20260620"
+
+    def test_intersect_mode_two_indicators_with_date(self):
+        """验证带 date 参数的 intersect 模式"""
+        rc, stdout, stderr = run_cli(
+            "--mode", "intersect",
+            "--indicator", "fetch_lxsz_ths,fetch_ljqs_ths",
+            "--date", "20260620",
+            timeout=120,
+        )
+        assert rc in (0, 1)
+        data = json.loads(stdout)
+        assert data["mode"] == "intersect"
+        assert data["indicators"] == ["fetch_lxsz_ths", "fetch_ljqs_ths"]
+
     def test_scan_mode_returns_signal_data(self):
         """验证 scan 模式完整运行，输出信号聚合结构（20 个 APIs 可能需要较长时间）"""
         rc, stdout, stderr = run_cli("--mode", "scan", "--top-n", "10")
         assert rc in (0, 1), f"stderr: {stderr}"
         data = json.loads(stdout)
         assert data["mode"] == "scan"
-        assert len(data["indicators"]) == 20
+        assert data["total_indicators"] == 20
         assert "signal_summary" in data
         assert "data" in data
         assert len(data["data"]) <= 10
