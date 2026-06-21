@@ -111,3 +111,74 @@ def fetch_tencent_quote_verbose(code: str) -> dict:
         except (ValueError, IndexError):
             return {}
     return {}
+
+
+def fetch_intraday_minute(code: str) -> dict:
+    """从腾讯财经获取当日分钟级K线数据。
+
+    解析 web.ifzq.gtimg.cn 返回的分钟K线 JSON，提取每笔分钟数据
+    （时间、价格、成交量、成交额）。
+
+    Args:
+        code: 6 位股票代码，如 600183
+
+    Returns:
+        dict，含股票代码、股票名称、交易日期、分钟K线数组，失败返回 {}
+    """
+    if code.startswith(("6", "9")):
+        prefixed = f"sh{code}"
+    elif code.startswith("8"):
+        prefixed = f"bj{code}"
+    else:
+        prefixed = f"sz{code}"
+
+    url = (
+        "https://web.ifzq.gtimg.cn/appstock/app/minute/query"
+        f"?_var=min_data&code={prefixed}"
+    )
+    try:
+        req = urllib.request.Request(url)
+        req.add_header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36")
+        req.add_header("Referer", "https://gu.qq.com/")
+        resp = urllib.request.urlopen(req, timeout=10)
+        raw = resp.read().decode("utf-8")
+    except Exception:
+        return {}
+
+    # 去掉 "min_data=" 前缀，解析 JSON
+    json_str = raw[len("min_data="):]
+    try:
+        data = json.loads(json_str)
+    except json.JSONDecodeError:
+        return {}
+
+    stock_data = data.get("data", {}).get(prefixed, {})
+    minute_section = stock_data.get("data", {})
+    trading_date = minute_section.get("date", "")
+    raw_minutes = minute_section.get("data", [])
+
+    # 从 qt 快照提取股票名称
+    qt_list = stock_data.get("qt", {}).get(prefixed, [])
+    stock_name = qt_list[1] if len(qt_list) > 1 else code
+
+    minutes = []
+    for raw_str in raw_minutes:
+        parts = raw_str.split()
+        if len(parts) != 4:
+            continue
+        try:
+            minutes.append({
+                "时间": parts[0],
+                "价格(元)": float(parts[1]),
+                "成交量": int(parts[2]),
+                "成交额(元)": float(parts[3]),
+            })
+        except (ValueError, IndexError):
+            continue
+
+    return {
+        "股票代码": code,
+        "股票名称": stock_name,
+        "交易日期": trading_date,
+        "分钟K线": minutes,
+    }
