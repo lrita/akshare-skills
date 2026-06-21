@@ -254,3 +254,174 @@ def fetch_stock_add_stock(code: str, date_str: str) -> list[dict]:
         return filtered
     except Exception:
         return []
+
+
+def _safe_df_to_records(df, date_str: str = None, years: int = None) -> list[dict]:
+    """安全的 DataFrame 转记录列表，可选的年限过滤。
+
+    Args:
+        df: pandas DataFrame
+        date_str: 基准日期 YYYYMMDD
+        years: 截取最近多少年，None 表示不过滤
+
+    Returns:
+        list[dict]
+    """
+    if df is None or df.empty:
+        return []
+    records = df.to_dict(orient="records")
+    if years is None or date_str is None:
+        return records
+    cutoff = datetime.strptime(date_str, "%Y%m%d") - timedelta(days=years * 365)
+    filtered = []
+    for r in records:
+        date_val = r.get("报告期", "") or r.get("日期", "") or r.get("截止日期", "")
+        if not date_val:
+            filtered.append(r)
+            continue
+        try:
+            rd = datetime.strptime(str(date_val)[:10], "%Y-%m-%d")
+            if rd >= cutoff:
+                filtered.append(r)
+        except ValueError:
+            filtered.append(r)
+    return filtered
+
+
+def fetch_financial_abstract(code: str, indicator: str, date_str: str = None) -> list[dict]:
+    """获取财务摘要（new_ths 接口）。
+
+    Args:
+        code: 股票代码
+        indicator: 指标类型，如 "按报告期"、"按年度"
+        date_str: 基准日期 YYYYMMDD，用于截取最近5年
+
+    Returns:
+        list[dict], 失败返回空列表
+    """
+    try:
+        import akshare as ak
+        df = ak.stock_financial_abstract_new_ths(symbol=code, indicator=indicator)
+    except Exception:
+        return []
+    return _safe_df_to_records(df, date_str, years=5)
+
+
+def fetch_financial_profit(code: str, date_str: str) -> list[dict]:
+    """获取利润表。
+
+    Args:
+        code: 股票代码
+        date_str: 基准日期 YYYYMMDD
+
+    Returns:
+        list[dict], 失败返回空列表
+    """
+    try:
+        import akshare as ak
+        df = ak.stock_financial_benefit_new_ths(symbol=code, indicator="按报告期")
+    except Exception:
+        return []
+    return _safe_df_to_records(df, date_str, years=5)
+
+
+def fetch_financial_debt(code: str, date_str: str) -> list[dict]:
+    """获取资产负债表。
+
+    Args:
+        code: 股票代码
+        date_str: 基准日期 YYYYMMDD
+
+    Returns:
+        list[dict], 失败返回空列表
+    """
+    try:
+        import akshare as ak
+        df = ak.stock_financial_debt_new_ths(symbol=code, indicator="按报告期")
+    except Exception:
+        return []
+    return _safe_df_to_records(df, date_str, years=5)
+
+
+def fetch_financial_cashflow(code: str, date_str: str) -> list[dict]:
+    """获取现金流量表。
+
+    Args:
+        code: 股票代码
+        date_str: 基准日期 YYYYMMDD
+
+    Returns:
+        list[dict], 失败返回空列表
+    """
+    try:
+        import akshare as ak
+        df = ak.stock_financial_cash_new_ths(symbol=code, indicator="按报告期")
+    except Exception:
+        return []
+    return _safe_df_to_records(df, date_str, years=5)
+
+
+def _fetch_profit_forecast(code: str, indicator: str) -> list[dict]:
+    """内部函数：获取盈利预测数据。
+
+    Args:
+        code: 股票代码
+        indicator: 预测指标类型
+
+    Returns:
+        list[dict], 失败返回空列表
+    """
+    try:
+        import akshare as ak
+        df = ak.stock_profit_forecast_ths(symbol=code, indicator=indicator)
+    except Exception:
+        return []
+    if df is None or df.empty:
+        return []
+    return df.to_dict(orient="records")
+
+
+def fetch_profit_forecast_eps(code: str) -> list[dict]:
+    """获取预测年报每股收益。"""
+    return _fetch_profit_forecast(code, "预测年报每股收益")
+
+
+def fetch_profit_forecast_net(code: str) -> list[dict]:
+    """获取预测年报净利润。"""
+    return _fetch_profit_forecast(code, "预测年报净利润")
+
+
+def fetch_profit_forecast_inst(code: str) -> list[dict]:
+    """获取业绩预测详表-机构。"""
+    return _fetch_profit_forecast(code, "业绩预测详表-机构")
+
+
+def fetch_profit_forecast_detail(code: str) -> list[dict]:
+    """获取业绩预测详表-详细指标预测。"""
+    return _fetch_profit_forecast(code, "业绩预测详表-详细指标预测")
+
+
+def fetch_revenue_structure(code: str, date_str: str) -> list[dict]:
+    """获取主营构成（东方财富）。
+
+    Args:
+        code: 股票代码
+        date_str: 基准日期 YYYYMMDD
+
+    Returns:
+        list[dict], 失败返回空列表
+    """
+    if code.startswith("6"):
+        prefixed = f"SH{code}"
+    elif code.startswith("0") or code.startswith("3"):
+        prefixed = f"SZ{code}"
+    elif code.startswith("8"):
+        prefixed = f"BJ{code}"
+    else:
+        prefixed = f"SH{code}"
+    try:
+        import akshare as ak
+        df = ak.stock_zygc_em(symbol=prefixed)
+    except Exception:
+        return []
+    return _safe_df_to_records(df, date_str, years=3)
