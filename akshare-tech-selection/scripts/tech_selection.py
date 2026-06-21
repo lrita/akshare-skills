@@ -7,9 +7,18 @@
 import sys
 import json
 import argparse
-from datetime import date
+from datetime import date, datetime, time
 
 import engine
+
+
+class _DateEncoder(json.JSONEncoder):
+    """Custom JSON encoder that converts date/datetime objects to ISO strings."""
+
+    def default(self, obj):
+        if isinstance(obj, (date, datetime, time)):
+            return obj.isoformat()
+        return super().default(obj)
 
 
 VALID_MODES = ("single", "intersect", "scan", "full")
@@ -130,7 +139,7 @@ def main() -> None:
         sys.exit(2)
 
     # 输出
-    output_json = json.dumps(result, ensure_ascii=False, indent=2)
+    output_json = json.dumps(result, ensure_ascii=False, indent=2, cls=_DateEncoder)
     if args.output:
         with open(args.output, "w", encoding="utf-8") as f:
             f.write(output_json)
