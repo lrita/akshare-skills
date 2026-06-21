@@ -7,6 +7,13 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import engine
+from ratelimit import _RATE_LIMITER
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """每个测试前重置全局 RateLimiter，避免测试间相互影响"""
+    _RATE_LIMITER._timestamps.clear()
 
 
 # ---- Mock fetcher 工厂 ----
@@ -95,7 +102,7 @@ class TestRunIntersect:
         import fetcher
         monkeypatch.setattr(fetcher, "fetch_a", mock_a, raising=False)
         monkeypatch.setattr(fetcher, "fetch_b", mock_b, raising=False)
-        result = engine.run_intersect(["fetch_a", "fetch_b"], max_workers=1)
+        result = engine.run_intersect(["fetch_a", "fetch_b"])
         assert result["intersect_count"] == 2
         codes = [d["stock_code"] for d in result["data"]]
         assert "000001" in codes
@@ -118,7 +125,7 @@ class TestRunIntersect:
         import fetcher
         monkeypatch.setattr(fetcher, "fetch_a", mock_a, raising=False)
         monkeypatch.setattr(fetcher, "fetch_b", mock_b, raising=False)
-        result = engine.run_intersect(["fetch_a", "fetch_b"], max_workers=1)
+        result = engine.run_intersect(["fetch_a", "fetch_b"])
         assert result["intersect_count"] == 0
         assert result["data"] == []
 
@@ -134,7 +141,7 @@ class TestRunIntersect:
         import fetcher
         monkeypatch.setattr(fetcher, "fetch_a", mock_a, raising=False)
         monkeypatch.setattr(fetcher, "fetch_b", mock_b, raising=False)
-        result = engine.run_intersect(["fetch_a", "fetch_b"], max_workers=1)
+        result = engine.run_intersect(["fetch_a", "fetch_b"])
         assert result["intersect_count"] == 0
         assert result["indicator_counts"]["fetch_b"] == 0
         assert len(result["errors"]) >= 1
@@ -148,7 +155,7 @@ class TestRunIntersect:
             }
         import fetcher
         monkeypatch.setattr(fetcher, "fetch_a", mock_a, raising=False)
-        result = engine.run_intersect(["fetch_a"], max_workers=1)
+        result = engine.run_intersect(["fetch_a"])
         assert result["intersect_count"] == 1
         item = result["data"][0]
         assert "fetch_a" in item["matched_indicators"]
@@ -192,7 +199,7 @@ class TestRunScan:
         monkeypatch.setattr(ft, "fetch_a", mock_a, raising=False)
         monkeypatch.setattr(ft, "fetch_b", mock_b, raising=False)
 
-        result = engine.run_scan(max_workers=1)
+        result = engine.run_scan()
 
         # 000001 在 2 个指标中都出现
         pingan = [d for d in result["data"] if d["stock_code"] == "000001"][0]
@@ -230,7 +237,7 @@ class TestRunScan:
         monkeypatch.setattr(ft, "fetch_b", mock_b, raising=False)
 
         # threshold=2: 只有同时在 2 个指标的股票才出现（即无股票满足）
-        result = engine.run_scan(max_workers=1, signal_threshold=2)
+        result = engine.run_scan(signal_threshold=2)
         assert len(result["data"]) == 0
 
     def test_top_n_limits_results(self, monkeypatch):
@@ -253,7 +260,7 @@ class TestRunScan:
             }
         monkeypatch.setattr(ft, "fetch_a", mock_a, raising=False)
 
-        result = engine.run_scan(max_workers=1, top_n=3)
+        result = engine.run_scan(top_n=3)
         assert len(result["data"]) == 3
 
     def test_signal_summary_contains_top_signals(self, monkeypatch):
@@ -283,7 +290,7 @@ class TestRunScan:
         monkeypatch.setattr(ft, "fetch_a", mock_a, raising=False)
         monkeypatch.setattr(ft, "fetch_b", mock_b, raising=False)
 
-        result = engine.run_scan(max_workers=1)
+        result = engine.run_scan()
         summary = result["signal_summary"]
         assert summary["total_stocks_with_signals"] == 13  # 10 + 3, no overlap
         assert len(summary["top_signals"]) == 2
@@ -350,11 +357,6 @@ class TestCLIParsing:
         args = parse_args(["--mode", "scan", "--top-n", "50"])
         assert args.top_n == 50
 
-    def test_parse_workers_default(self):
-        from tech_selection import parse_args
-        args = parse_args(["--mode", "scan"])
-        assert args.workers == 8
-
     def test_parse_with_output(self):
         from tech_selection import parse_args
         args = parse_args(["--mode", "scan", "--output", "result.json"])
@@ -385,7 +387,7 @@ class TestRunFull:
         monkeypatch.setattr(ft, "fetch_a", mock_a, raising=False)
         monkeypatch.setattr(ft, "fetch_b", mock_b, raising=False)
 
-        result = engine.run_full(max_workers=1)
+        result = engine.run_full()
 
         assert result["mode"] == "full"
         assert result["total_indicators"] == 2
