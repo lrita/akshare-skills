@@ -9,12 +9,27 @@
 import argparse
 import json
 import math
+import os
 import random
 import re
 import sys
 import time
 import urllib.request
 from datetime import datetime, timedelta
+
+# 屏蔽 akshare 的 tqdm 进度条输出，避免污染 stderr
+os.environ.setdefault("TQDM_DISABLE", "1")
+try:
+    import tqdm as _tqdm_module
+    _original_tqdm_init = _tqdm_module.tqdm.__init__
+
+    def _patched_tqdm_init(self, *args, **kwargs):
+        kwargs.setdefault("disable", True)
+        _original_tqdm_init(self, *args, **kwargs)
+
+    _tqdm_module.tqdm.__init__ = _patched_tqdm_init
+except ImportError:
+    pass
 
 try:
     import akshare as ak
