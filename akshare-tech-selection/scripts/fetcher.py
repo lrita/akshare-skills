@@ -351,6 +351,8 @@ def _make_fetcher(ind_def: dict):
 
 
 # 为所有 20 个指标生成 fetcher 函数，并注入到模块作用域
+__all__ = [ind["name"] for ind in ALL_INDICATORS]
+
 _globals = globals()
 for _ind in ALL_INDICATORS:
     _fn = _make_fetcher(_ind)
