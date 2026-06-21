@@ -2,16 +2,27 @@
 # -*- coding: utf-8 -*-
 """
 技术指标选股 — 数据获取层
-封装 20 个 akshare 技术选股 API，统一列名标准化和代码格式
+直接 HTTP 请求 20 个技术选股 API，统一列名标准化和代码格式
 """
+import os
+import sys
+import re
+import time
+from io import StringIO
+
 import pandas as pd
 import numpy as np
+import requests
+import py_mini_racer
+from bs4 import BeautifulSoup
+
+from akshare.datasets import get_ths_js
 
 
 # ---- 常量 ----
 
 ALL_INDICATORS = [
-    # 第 1 类：同花顺技术指标 (12 个)
+    # 第 1 类：同花顺技术指标 (11 个)
     {
         "name": "fetch_cxg_ths",
         "api": "stock_rank_cxg_ths",
@@ -133,6 +144,7 @@ ALL_INDICATORS = [
         "default_symbol": None,
         "needs_date": False,
     },
+    # 第 2 类：巨潮资讯 (1 个)
     {
         "name": "fetch_forecast_cninfo",
         "api": "stock_rank_forecast_cninfo",
@@ -144,7 +156,7 @@ ALL_INDICATORS = [
         "default_symbol": None,
         "needs_date": True,
     },
-    # 第 2 类：涨停板分析 (6 个)
+    # 第 3 类：涨停板分析 (6 个)
     {
         "name": "fetch_zt_pool_strong",
         "api": "stock_zt_pool_strong_em",
@@ -211,7 +223,7 @@ ALL_INDICATORS = [
         "default_symbol": None,
         "needs_date": True,
     },
-    # 第 3 类：异动监控 (2 个)
+    # 第 4 类：异动监控 (2 个)
     {
         "name": "fetch_board_change",
         "api": "stock_board_change_em",
@@ -238,6 +250,45 @@ ALL_INDICATORS = [
 
 # 按名称快速查找
 INDICATOR_MAP = {ind["name"]: ind for ind in ALL_INDICATORS}
+
+# 导出列表（20 个 fetcher 函数名，由后续任务填充实现）
+__all__ = [ind["name"] for ind in ALL_INDICATORS]
+
+
+# ---- 同花顺 JS 解密 ----
+
+def _get_file_content_ths(file: str = "ths.js") -> str:
+    """获取同花顺 JS 文件内容"""
+    setting_file_path = get_ths_js(file)
+    with open(setting_file_path, encoding="utf-8") as f:
+        file_data = f.read()
+    return file_data
+
+
+# ---- 反爬检测 ----
+
+def _check_thx_blocked(response: requests.Response, api_name: str) -> None:
+    """
+    检测同花顺/巨潮 API 是否被反爬拦截。
+    命中则输出 AI 可读提示并 os._exit(1)。
+    """
+    if response.status_code == 403:
+        print(
+            f"[BLOCKED] {api_name}: HTTP 403 Forbidden — "
+            f"被反爬虫系统拦截，请等待 1 小时后重试",
+            file=sys.stderr,
+        )
+        os._exit(1)
+    # 部分情况返回 200 但内容是验证页面
+    text_lower = response.text.lower()
+    block_signals = ["验证", "滑块", "captcha", "请在下方输入"]
+    if any(s in text_lower for s in block_signals) or len(response.text.strip()) < 200:
+        print(
+            f"[BLOCKED] {api_name}: 返回异常页面 — "
+            f"被反爬虫系统拦截，请等待 1 小时后重试",
+            file=sys.stderr,
+        )
+        os._exit(1)
 
 
 # ---- 工具函数 ----
@@ -277,34 +328,18 @@ def standardize_output(
     category: str,
     categories: list[str],
 ) -> dict | None:
-    """将 akshare 返回的 DataFrame 转为标准化 dict。
-
-    Args:
-        df: akshare API 返回的 DataFrame
-        code_col: 股票代码列名
-        name_col: 股票名称列名
-        indicator: fetcher 名称
-        category: 指标中文简称
-        categories: 指标分类路径
-
-    Returns:
-        标准化 dict 格式，或 None（数据为空）
-    """
+    """将 DataFrame 转为标准化 dict。"""
     if df is None or df.empty:
         return None
     df = df.copy()
-    # NaN → None
     df = df.where(df.notna(), None)
     records = df.to_dict(orient="records")
     for record in records:
-        # 标准化股票代码
         if code_col in record:
             record["stock_code"] = normalize_stock_code(record.get(code_col))
         else:
             record["stock_code"] = None
-        # 股票名称
         record["stock_name"] = record.get(name_col)
-    # 递归清理 NaN
     records = _nan_to_none(records)
     return {
         "indicator": indicator,
@@ -315,47 +350,5 @@ def standardize_output(
     }
 
 
-# 为每个指标生成 fetcher 函数（通过闭包动态生成）
-def _make_fetcher(ind_def: dict):
-    """根据指标定义创建 fetcher 函数"""
-    import akshare as ak
-
-    api_name = ind_def["api"]
-    code_col = ind_def["code_col"]
-    name_col = ind_def["name_col"]
-    indicator = ind_def["name"]
-    category = ind_def["category"]
-    categories = ind_def["categories"]
-
-    def fetcher(symbol: str | None = None, date: str | None = None) -> dict | None:
-        try:
-            fn = getattr(ak, api_name)
-            # 构建参数
-            if ind_def["needs_date"] and date:
-                result = fn(date=date)
-            elif ind_def["needs_date"]:
-                # 有 date 需求但未传入，用默认值调用
-                result = fn()
-            elif ind_def["needs_symbol"]:
-                sym = symbol if symbol else ind_def["default_symbol"]
-                result = fn(sym)
-            else:
-                result = fn()
-            return standardize_output(
-                result, code_col, name_col,
-                indicator, category, categories,
-            )
-        except Exception:
-            return None
-    return fetcher
-
-
-# 为所有 20 个指标生成 fetcher 函数，并注入到模块作用域
-__all__ = [ind["name"] for ind in ALL_INDICATORS]
-
-_globals = globals()
-for _ind in ALL_INDICATORS:
-    _fn = _make_fetcher(_ind)
-    _fn.__name__ = _ind["name"]
-    _fn.__doc__ = f"获取{_ind['category']}榜单"
-    _globals[_ind["name"]] = _fn
+# ---- 20 个 Fetcher 函数 ----
+# （以下由后续任务填充）
