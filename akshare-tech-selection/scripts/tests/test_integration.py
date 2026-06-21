@@ -1,5 +1,8 @@
 """集成测试 — 需要真实网络，标记为 integration"""
-import os, sys, json, subprocess
+import os
+import sys
+import json
+import subprocess
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import pytest
@@ -63,7 +66,7 @@ class TestRealAPI:
         assert rc in (0, 1), f"stderr: {stderr}"
         data = json.loads(stdout)
         assert data["mode"] == "intersect"
-        assert data["total_indicators"] == 2
+        assert len(data["indicators"]) == 2
         assert "indicator_counts" in data
         assert "data" in data
         assert "errors" in data
@@ -74,7 +77,7 @@ class TestRealAPI:
         assert rc in (0, 1), f"stderr: {stderr}"
         data = json.loads(stdout)
         assert data["mode"] == "scan"
-        assert data["total_indicators"] == 20
+        assert len(data["indicators"]) == 20
         assert "signal_summary" in data
         assert "data" in data
         assert len(data["data"]) <= 10
