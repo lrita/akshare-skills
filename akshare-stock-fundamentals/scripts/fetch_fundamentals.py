@@ -614,3 +614,182 @@ def fetch_notices(code: str, date_str: str) -> list[dict]:
     if df is None or df.empty:
         return []
     return df.to_dict(orient="records")
+
+
+def parse_args():
+    """解析命令行参数。"""
+    parser = argparse.ArgumentParser(
+        description="获取A股个股基本面数据，输出结构化JSON",
+    )
+    parser.add_argument("--symbol", required=True, help="股票代码，纯数字，如 600183")
+    parser.add_argument("--date", default=datetime.now().strftime("%Y%m%d"), help="基准日期 YYYYMMDD，默认今天")
+    parser.add_argument("--output", default=None, help="输出 JSON 文件路径，默认 stdout")
+    args = parser.parse_args()
+    if not args.symbol.isdigit() or len(args.symbol) != 6:
+        print(f"[ERROR] 股票代码格式非法: {args.symbol}，应为6位纯数字", file=sys.stderr)
+        sys.exit(2)
+    return args
+
+
+def fetch_all_sections(symbol: str, date_str: str, limiter):
+    """按板块顺序拉取所有数据源，组装 sections dict。返回 (sections, errors)。"""
+    errors = []
+    sections = {}
+
+    # ---- basic_info ----
+    basic_info = {}
+    basic_success = 0
+    limiter.acquire()
+    try:
+        basic_info["quote"] = fetch_tencent_quote(symbol)
+        basic_success += 1
+    except Exception as e:
+        errors.append({"section": "basic_info", "source": "tencent_quote", "error": str(e)})
+        basic_info["quote"] = None
+    limiter.acquire()
+    try:
+        basic_info["profile"] = fetch_eastmoney_search(symbol)
+        basic_success += 1
+    except Exception as e:
+        errors.append({"section": "basic_info", "source": "eastmoney_search", "error": str(e)})
+        basic_info["profile"] = None
+    limiter.acquire()
+    try:
+        basic_info["add_stock"] = fetch_stock_add_stock(symbol, date_str)
+        basic_success += 1
+    except Exception as e:
+        errors.append({"section": "basic_info", "source": "stock_add_stock", "error": str(e)})
+        basic_info["add_stock"] = None
+    sections["basic_info"] = basic_info if basic_success > 0 else None
+
+    # ---- fundamentals ----
+    fin_success = 0
+    fundamentals = {"financials": {}, "profit_forecast": {}, "revenue_structure": None}
+    fin_calls = [
+        ("abstract_by_report", fetch_financial_abstract, {"code": symbol, "indicator": "按报告期", "date_str": date_str}),
+        ("abstract_by_year", fetch_financial_abstract, {"code": symbol, "indicator": "按年度", "date_str": date_str}),
+        ("benefit", fetch_financial_profit, {"code": symbol, "date_str": date_str}),
+        ("debt", fetch_financial_debt, {"code": symbol, "date_str": date_str}),
+        ("cashflow", fetch_financial_cashflow, {"code": symbol, "date_str": date_str}),
+    ]
+    for name, fn, kwargs in fin_calls:
+        limiter.acquire()
+        try:
+            fundamentals["financials"][name] = fn(**kwargs)
+            fin_success += 1
+        except Exception as e:
+            errors.append({"section": "fundamentals", "source": f"financial_{name}", "error": str(e)})
+            fundamentals["financials"][name] = None
+    forecast_calls = [
+        ("eps_forecast", fetch_profit_forecast_eps),
+        ("net_profit_forecast", fetch_profit_forecast_net),
+        ("institution_detail", fetch_profit_forecast_inst),
+        ("indicator_detail", fetch_profit_forecast_detail),
+    ]
+    for name, fn in forecast_calls:
+        limiter.acquire()
+        try:
+            fundamentals["profit_forecast"][name] = fn(symbol)
+            fin_success += 1
+        except Exception as e:
+            errors.append({"section": "fundamentals", "source": f"profit_forecast_{name}", "error": str(e)})
+            fundamentals["profit_forecast"][name] = None
+    limiter.acquire()
+    try:
+        fundamentals["revenue_structure"] = fetch_revenue_structure(symbol, date_str)
+        fin_success += 1
+    except Exception as e:
+        errors.append({"section": "fundamentals", "source": "revenue_structure", "error": str(e)})
+        fundamentals["revenue_structure"] = None
+    # 合并 abstract_by_report / abstract_by_year 到 abstract
+    abs_by_report = fundamentals["financials"].pop("abstract_by_report", None)
+    abs_by_year = fundamentals["financials"].pop("abstract_by_year", None)
+    fundamentals["financials"]["abstract"] = {"by_report": abs_by_report, "by_year": abs_by_year}
+    sections["fundamentals"] = fundamentals if fin_success > 0 else None
+
+    # ---- risk_signals ----
+    risk_signals = {}
+    risk_success = 0
+    risk_calls = [
+        ("block_trades", fetch_block_trades, {"code": symbol, "date_str": date_str}),
+        ("restricted_release_em", fetch_restricted_release_em, {"code": symbol, "date_str": date_str}),
+        ("restricted_release_sina", fetch_restricted_release_sina, {"code": symbol, "date_str": date_str}),
+        ("pledge", fetch_pledge, {"code": symbol}),
+    ]
+    for name, fn, kwargs in risk_calls:
+        limiter.acquire()
+        try:
+            risk_signals[name] = fn(**kwargs)
+            risk_success += 1
+        except Exception as e:
+            errors.append({"section": "risk_signals", "source": name, "error": str(e)})
+            risk_signals[name] = None
+    sections["risk_signals"] = risk_signals if risk_success > 0 else None
+
+    # ---- events ----
+    limiter.acquire()
+    try:
+        notices = fetch_notices(symbol, date_str)
+        sections["events"] = {"notices": {"period": _build_period(date_str, 90), "data": notices}}
+    except Exception as e:
+        errors.append({"section": "events", "source": "notices", "error": str(e)})
+        sections["events"] = None
+
+    # ---- institutional ----
+    limiter.acquire()
+    try:
+        visits = fetch_research_visits(symbol, date_str)
+        sections["institutional"] = {"research_visits": {"period": _build_period(date_str, 30), "data": visits}}
+    except Exception as e:
+        errors.append({"section": "institutional", "source": "research_visits", "error": str(e)})
+        sections["institutional"] = None
+
+    return sections, errors
+
+
+def _build_period(date_str: str, days_back: int) -> dict:
+    end = datetime.strptime(date_str, "%Y%m%d")
+    start = end - timedelta(days=days_back)
+    return {"start": start.strftime("%Y%m%d"), "end": end.strftime("%Y%m%d")}
+
+
+def build_output(symbol: str, sections: dict, errors: list, date_str: str) -> dict:
+    stock_name = symbol
+    bi = sections.get("basic_info", {}) or {}
+    profile = bi.get("profile", {}) or {}
+    if profile.get("security_short_name"):
+        stock_name = profile["security_short_name"]
+    return {
+        "symbol": symbol,
+        "stock_name": stock_name,
+        "fetch_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "sections": sections,
+        "errors": errors,
+    }
+
+
+def main() -> int:
+    args = parse_args()
+    limiter = RateLimiter(max_calls=10, window_seconds=60)
+    sections, errors = fetch_all_sections(args.symbol, args.date, limiter)
+    any_successful = any(v is not None for v in sections.values())
+    output = build_output(args.symbol, sections, errors, args.date)
+    json_str = json.dumps(output, ensure_ascii=False, indent=2, default=str)
+    if args.output:
+        try:
+            with open(args.output, "w", encoding="utf-8") as f:
+                f.write(json_str)
+                f.write("\n")
+        except Exception as e:
+            print(f"[ERROR] 写入输出文件失败: {e}", file=sys.stderr)
+            sys.stdout.write(json_str)
+            sys.stdout.write("\n")
+    else:
+        sys.stdout.write(json_str)
+        sys.stdout.write("\n")
+    sys.stdout.flush()
+    return 0 if any_successful else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
