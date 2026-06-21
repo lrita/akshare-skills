@@ -9,6 +9,24 @@ import json
 import argparse
 from datetime import date, datetime, time
 
+# Monkey-patch tqdm to disable progress bars globally.
+# akshare uses tqdm progress bars that write to stderr, which can cause
+# subprocess hangs in certain environments (e.g. CI, background shells).
+# This must execute BEFORE importing engine (which imports fetcher → akshare).
+import os as _os
+_os.environ.setdefault("TQDM_DISABLE", "1")
+try:
+    import tqdm as _tqdm_module
+    _original_tqdm_init = _tqdm_module.tqdm.__init__
+
+    def _patched_tqdm_init(self, *args, **kwargs):
+        kwargs.setdefault("disable", True)
+        _original_tqdm_init(self, *args, **kwargs)
+
+    _tqdm_module.tqdm.__init__ = _patched_tqdm_init
+except ImportError:
+    pass
+
 import engine
 
 
