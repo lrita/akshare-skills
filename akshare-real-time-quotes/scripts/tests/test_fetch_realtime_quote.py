@@ -120,6 +120,20 @@ class TestFetchTencentQuoteVerbose:
         assert b["委差"] == 1898
         assert isinstance(b["委差"], int)
 
+        # 验证中间档位也被正确解析
+        assert b["买二价(元)"] == 183.86
+        assert b["买二量(手)"] == 159
+        assert b["买三价(元)"] == 183.85
+        assert b["买三量(手)"] == 587
+        assert b["买四价(元)"] == 183.84
+        assert b["买四量(手)"] == 329
+        assert b["卖二价(元)"] == 183.89
+        assert b["卖二量(手)"] == 46
+        assert b["卖三价(元)"] == 183.90
+        assert b["卖三量(手)"] == 77
+        assert b["卖四价(元)"] == 183.91
+        assert b["卖四量(手)"] == 32
+
     def test_valuation_fields(self):
         """验证估值数据分组字段值和类型"""
         mock_resp = Mock()
