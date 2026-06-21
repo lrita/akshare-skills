@@ -69,3 +69,88 @@ class TestRunSingle:
         item = result["data"][0]
         assert item["stock_code"] == "000001"
         assert item["stock_name"] == "平安银行"
+
+
+class TestRunIntersect:
+    def test_two_indicators_with_overlap(self, monkeypatch):
+        def mock_a(symbol=None, date=None):
+            return {
+                "indicator": "fetch_a", "category": "A类", "categories": ["A"],
+                "count": 3,
+                "data": [
+                    {"stock_code": "000001", "stock_name": "平安银行", "val": 1},
+                    {"stock_code": "600519", "stock_name": "贵州茅台", "val": 2},
+                    {"stock_code": "300750", "stock_name": "宁德时代", "val": 3},
+                ],
+            }
+        def mock_b(symbol=None, date=None):
+            return {
+                "indicator": "fetch_b", "category": "B类", "categories": ["B"],
+                "count": 2,
+                "data": [
+                    {"stock_code": "600519", "stock_name": "贵州茅台", "val": 5},
+                    {"stock_code": "000001", "stock_name": "平安银行", "val": 6},
+                ],
+            }
+        import fetcher
+        monkeypatch.setattr(fetcher, "fetch_a", mock_a, raising=False)
+        monkeypatch.setattr(fetcher, "fetch_b", mock_b, raising=False)
+        result = engine.run_intersect(["fetch_a", "fetch_b"], max_workers=1)
+        assert result["intersect_count"] == 2
+        codes = [d["stock_code"] for d in result["data"]]
+        assert "000001" in codes
+        assert "600519" in codes
+        assert result["succeeded_indicators"] == 2
+
+    def test_no_overlap_returns_empty(self, monkeypatch):
+        def mock_a(symbol=None, date=None):
+            return {
+                "indicator": "fetch_a", "category": "A类", "categories": ["A"],
+                "count": 1,
+                "data": [{"stock_code": "000001", "stock_name": "平安"}],
+            }
+        def mock_b(symbol=None, date=None):
+            return {
+                "indicator": "fetch_b", "category": "B类", "categories": ["B"],
+                "count": 1,
+                "data": [{"stock_code": "600519", "stock_name": "茅台"}],
+            }
+        import fetcher
+        monkeypatch.setattr(fetcher, "fetch_a", mock_a, raising=False)
+        monkeypatch.setattr(fetcher, "fetch_b", mock_b, raising=False)
+        result = engine.run_intersect(["fetch_a", "fetch_b"], max_workers=1)
+        assert result["intersect_count"] == 0
+        assert result["data"] == []
+
+    def test_one_fetcher_returns_none(self, monkeypatch):
+        def mock_a(symbol=None, date=None):
+            return {
+                "indicator": "fetch_a", "category": "A类", "categories": ["A"],
+                "count": 1,
+                "data": [{"stock_code": "000001", "stock_name": "平安"}],
+            }
+        def mock_b(symbol=None, date=None):
+            return None
+        import fetcher
+        monkeypatch.setattr(fetcher, "fetch_a", mock_a, raising=False)
+        monkeypatch.setattr(fetcher, "fetch_b", mock_b, raising=False)
+        result = engine.run_intersect(["fetch_a", "fetch_b"], max_workers=1)
+        assert result["intersect_count"] == 0
+        assert result["indicator_counts"]["fetch_b"] == 0
+        assert len(result["errors"]) >= 1
+
+    def test_each_result_has_matched_indicators_and_details(self, monkeypatch):
+        def mock_a(symbol=None, date=None):
+            return {
+                "indicator": "fetch_a", "category": "A类", "categories": ["A"],
+                "count": 1,
+                "data": [{"stock_code": "000001", "stock_name": "平安", "score": 90}],
+            }
+        import fetcher
+        monkeypatch.setattr(fetcher, "fetch_a", mock_a, raising=False)
+        result = engine.run_intersect(["fetch_a"], max_workers=1)
+        assert result["intersect_count"] == 1
+        item = result["data"][0]
+        assert "fetch_a" in item["matched_indicators"]
+        assert "fetch_a" in item["indicator_details"]
+        assert item["indicator_details"]["fetch_a"]["score"] == 90

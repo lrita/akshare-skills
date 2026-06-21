@@ -106,3 +106,81 @@ def run_single(
         "data": data,
         "errors": errors,
     }
+
+
+# ---- 模式 2: intersect ----
+
+def run_intersect(
+    indicators: list[str],
+    symbol: str | None = None,
+    date: str | None = None,
+    max_workers: int = 8,
+) -> dict:
+    """多指标交集查询"""
+    results, errors = _call_fetchers_concurrent(indicators, date=date, max_workers=max_workers)
+
+    indicator_counts = {}
+    for ind_name in indicators:
+        if ind_name in results:
+            indicator_counts[ind_name] = results[ind_name].get("count", len(results[ind_name].get("data", [])))
+        else:
+            indicator_counts[ind_name] = 0
+
+    if len(results) == 0:
+        return {
+            "mode": "intersect",
+            "indicators": indicators,
+            "params": {"date": date} if date else {},
+            "fetch_time": _now_str(),
+            "intersect_count": 0,
+            "indicator_counts": indicator_counts,
+            "succeeded_indicators": 0,
+            "failed_indicators": len(indicators),
+            "data": [],
+            "errors": errors,
+        }
+
+    # Build stock_code index for each indicator
+    code_to_indicators = {}
+    code_to_details = {}
+    for ind_name, result in results.items():
+        for item in result.get("data", []):
+            code = item.get("stock_code", "")
+            if code not in code_to_indicators:
+                code_to_indicators[code] = set()
+                code_to_details[code] = {}
+            code_to_indicators[code].add(ind_name)
+            code_to_details[code][ind_name] = {k: v for k, v in item.items() if k not in ("stock_code", "stock_name")}
+
+    required_count = len(indicators)
+    intersect_data = []
+    for code, matched in code_to_indicators.items():
+        if len(matched) == required_count:
+            # Get stock_name from first indicator that has it
+            stock_name = ""
+            for mat_ind in matched:
+                for item in results[mat_ind].get("data", []):
+                    if item.get("stock_code") == code and item.get("stock_name"):
+                        stock_name = item["stock_name"]
+                        break
+                if stock_name:
+                    break
+            intersect_data.append({
+                "stock_code": code,
+                "stock_name": stock_name,
+                "matched_indicators": sorted(matched),
+                "indicator_details": code_to_details[code],
+            })
+
+    return {
+        "mode": "intersect",
+        "indicators": indicators,
+        "params": {"date": date} if date else {},
+        "fetch_time": _now_str(),
+        "intersect_count": len(intersect_data),
+        "indicator_counts": indicator_counts,
+        "succeeded_indicators": len(results),
+        "failed_indicators": len(indicators) - len(results),
+        "data": intersect_data,
+        "errors": errors,
+    }
