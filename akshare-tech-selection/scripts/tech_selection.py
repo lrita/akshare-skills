@@ -163,15 +163,18 @@ def main() -> None:
             f.write(output_json)
             f.write("\n")
     else:
-        print(output_json)
+        sys.stdout.write(output_json)
+        sys.stdout.write("\n")
+        sys.stdout.flush()
 
-    # exit code
+    # exit code — use os._exit() to prevent akshare's background threads
+    # (tqdm cleanup, ThreadPoolExecutor workers) from blocking process exit
     failed = result.get("errors", [])
     succeeded = result.get("succeeded_indicators", 0)
 
     if failed and succeeded == 0:
         os._exit(1)
-    os._exit(0)
+    os._exit(0)  # needed: sys.exit would hang on thread cleanup
 
 
 if __name__ == "__main__":
