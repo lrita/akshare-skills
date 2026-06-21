@@ -184,3 +184,103 @@ def run_intersect(
         "data": intersect_data,
         "errors": errors,
     }
+
+
+# ---- 模式 3: scan ----
+
+def run_scan(
+    symbol: str | None = None,
+    date: str | None = None,
+    max_workers: int = 8,
+    signal_threshold: int = 1,
+    top_n: int | None = None,
+) -> dict:
+    """全量扫描: 遍历 ALL_INDICATORS，按 stock_code 聚合信号"""
+    ind_names = [ind["name"] for ind in fetcher.ALL_INDICATORS]
+    results, errors = _call_fetchers_concurrent(ind_names, date=date, max_workers=max_workers)
+
+    # 构建每个 indicator 的元信息
+    ind_meta = {ind["name"]: ind for ind in fetcher.ALL_INDICATORS}
+
+    # code -> {stock_name, signals: [...]}
+    code_to_signals = {}
+    indicator_counts = {}
+    for ind_name in ind_names:
+        result = results.get(ind_name)
+        if result is None:
+            indicator_counts[ind_name] = 0
+            continue
+        data = result.get("data", [])
+        indicator_counts[ind_name] = len(data)
+        meta = ind_meta.get(ind_name, {})
+        for item in data:
+            code = item.get("stock_code", "")
+            name = item.get("stock_name", "")
+            if code not in code_to_signals:
+                code_to_signals[code] = {
+                    "stock_name": name,
+                    "signals": [],
+                }
+            elif name and not code_to_signals[code]["stock_name"]:
+                code_to_signals[code]["stock_name"] = name
+            signal = {
+                "indicator": meta.get("name", ind_name),
+                "category": meta.get("category", ""),
+                "categories": meta.get("categories", []),
+            }
+            # 附上指标明细数据（除去 stock_code/stock_name）
+            detail = {k: v for k, v in item.items() if k not in ("stock_code", "stock_name")}
+            if detail:
+                signal["detail"] = detail
+            code_to_signals[code]["signals"].append(signal)
+
+    # 按 signal_threshold 过滤，并按信号数降序排列
+    agg_data = []
+    for code, info in code_to_signals.items():
+        signal_count = len(info["signals"])
+        if signal_count >= signal_threshold:
+            agg_data.append({
+                "stock_code": code,
+                "stock_name": info["stock_name"],
+                "signal_count": signal_count,
+                "signals": info["signals"],
+            })
+
+    agg_data.sort(key=lambda x: x["signal_count"], reverse=True)
+
+    if top_n is not None:
+        agg_data = agg_data[:top_n]
+
+    # 构建 signal_summary
+    signal_stats = {}
+    for code, info in code_to_signals.items():
+        for sig in info["signals"]:
+            ind = sig["indicator"]
+            if ind not in signal_stats:
+                signal_stats[ind] = {
+                    "indicator": ind,
+                    "category": sig["category"],
+                    "hit_count": 0,
+                }
+            signal_stats[ind]["hit_count"] += 1
+
+    top_signals = sorted(signal_stats.values(), key=lambda x: x["hit_count"], reverse=True)
+
+    total_stocks = len(set(code_to_signals.keys()))
+
+    return {
+        "mode": "scan",
+        "indicators": ind_names,
+        "params": {"date": date, "signal_threshold": signal_threshold, "top_n": top_n} if any([date, signal_threshold != 1, top_n is not None]) else {},
+        "fetch_time": _now_str(),
+        "total_stocks_with_signals": total_stocks,
+        "indicator_counts": indicator_counts,
+        "succeeded_indicators": len(results),
+        "failed_indicators": len(ind_names) - len(results),
+        "data": agg_data,
+        "signal_summary": {
+            "total_stocks_with_signals": total_stocks,
+            "top_signals": top_signals,
+        },
+        "errors": errors,
+    }

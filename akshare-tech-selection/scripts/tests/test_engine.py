@@ -154,3 +154,136 @@ class TestRunIntersect:
         assert "fetch_a" in item["matched_indicators"]
         assert "fetch_a" in item["indicator_details"]
         assert item["indicator_details"]["fetch_a"]["score"] == 90
+
+
+class TestRunScan:
+    def test_aggregates_signals_by_stock(self, monkeypatch):
+        """同一只股票在多个指标命中，应聚合为一个条目"""
+        import fetcher as ft
+
+        test_indicators = [
+            {"name": "fetch_a", "api": "mock", "category": "A类", "categories": ["A"],
+             "code_col": "代码", "name_col": "名称", "needs_symbol": False,
+             "default_symbol": None, "needs_date": False},
+            {"name": "fetch_b", "api": "mock", "category": "B类", "categories": ["B"],
+             "code_col": "代码", "name_col": "名称", "needs_symbol": False,
+             "default_symbol": None, "needs_date": False},
+        ]
+        monkeypatch.setattr(ft, "ALL_INDICATORS", test_indicators)
+
+        def mock_a(symbol=None, date=None):
+            return {
+                "indicator": "fetch_a", "category": "A类", "categories": ["A"],
+                "count": 2,
+                "data": [
+                    {"stock_code": "000001", "stock_name": "平安银行", "val": 1},
+                    {"stock_code": "600519", "stock_name": "贵州茅台", "val": 2},
+                ],
+            }
+        def mock_b(symbol=None, date=None):
+            return {
+                "indicator": "fetch_b", "category": "B类", "categories": ["B"],
+                "count": 2,
+                "data": [
+                    {"stock_code": "000001", "stock_name": "平安银行", "val": 5},
+                    {"stock_code": "300750", "stock_name": "宁德时代", "val": 6},
+                ],
+            }
+        monkeypatch.setattr(ft, "fetch_a", mock_a, raising=False)
+        monkeypatch.setattr(ft, "fetch_b", mock_b, raising=False)
+
+        result = engine.run_scan(max_workers=1)
+
+        # 000001 在 2 个指标中都出现
+        pingan = [d for d in result["data"] if d["stock_code"] == "000001"][0]
+        assert pingan["signal_count"] == 2
+        assert len(pingan["signals"]) == 2
+        signal_inds = [s["indicator"] for s in pingan["signals"]]
+        assert "fetch_a" in signal_inds
+        assert "fetch_b" in signal_inds
+
+    def test_signal_threshold_filters(self, monkeypatch):
+        import fetcher as ft
+        test_indicators = [
+            {"name": "fetch_a", "api": "mock", "category": "A类", "categories": ["A"],
+             "code_col": "代码", "name_col": "名称", "needs_symbol": False,
+             "default_symbol": None, "needs_date": False},
+            {"name": "fetch_b", "api": "mock", "category": "B类", "categories": ["B"],
+             "code_col": "代码", "name_col": "名称", "needs_symbol": False,
+             "default_symbol": None, "needs_date": False},
+        ]
+        monkeypatch.setattr(ft, "ALL_INDICATORS", test_indicators)
+
+        def mock_a(symbol=None, date=None):
+            return {
+                "indicator": "fetch_a", "category": "A类", "categories": ["A"],
+                "count": 1,
+                "data": [{"stock_code": "000001", "stock_name": "平安银行", "val": 1}],
+            }
+        def mock_b(symbol=None, date=None):
+            return {
+                "indicator": "fetch_b", "category": "B类", "categories": ["B"],
+                "count": 1,
+                "data": [{"stock_code": "600519", "stock_name": "贵州茅台", "val": 2}],
+            }
+        monkeypatch.setattr(ft, "fetch_a", mock_a, raising=False)
+        monkeypatch.setattr(ft, "fetch_b", mock_b, raising=False)
+
+        # threshold=2: 只有同时在 2 个指标的股票才出现（即无股票满足）
+        result = engine.run_scan(max_workers=1, signal_threshold=2)
+        assert len(result["data"]) == 0
+
+    def test_top_n_limits_results(self, monkeypatch):
+        import fetcher as ft
+        test_indicators = [
+            {"name": "fetch_a", "api": "mock", "category": "A类", "categories": ["A"],
+             "code_col": "代码", "name_col": "名称", "needs_symbol": False,
+             "default_symbol": None, "needs_date": False},
+        ]
+        monkeypatch.setattr(ft, "ALL_INDICATORS", test_indicators)
+
+        def mock_a(symbol=None, date=None):
+            return {
+                "indicator": "fetch_a", "category": "A类", "categories": ["A"],
+                "count": 5,
+                "data": [
+                    {"stock_code": f"00000{i}", "stock_name": f"股票{i}", "val": i}
+                    for i in range(1, 6)
+                ],
+            }
+        monkeypatch.setattr(ft, "fetch_a", mock_a, raising=False)
+
+        result = engine.run_scan(max_workers=1, top_n=3)
+        assert len(result["data"]) == 3
+
+    def test_signal_summary_contains_top_signals(self, monkeypatch):
+        import fetcher as ft
+        test_indicators = [
+            {"name": "fetch_a", "api": "mock", "category": "A类", "categories": ["A"],
+             "code_col": "代码", "name_col": "名称", "needs_symbol": False,
+             "default_symbol": None, "needs_date": False},
+            {"name": "fetch_b", "api": "mock", "category": "B类", "categories": ["B"],
+             "code_col": "代码", "name_col": "名称", "needs_symbol": False,
+             "default_symbol": None, "needs_date": False},
+        ]
+        monkeypatch.setattr(ft, "ALL_INDICATORS", test_indicators)
+
+        def mock_a(symbol=None, date=None):
+            return {
+                "indicator": "fetch_a", "category": "A类", "categories": ["A"],
+                "count": 10,
+                "data": [{"stock_code": f"0000{i:02d}", "stock_name": f"s{i}"} for i in range(10)],
+            }
+        def mock_b(symbol=None, date=None):
+            return {
+                "indicator": "fetch_b", "category": "B类", "categories": ["B"],
+                "count": 3,
+                "data": [{"stock_code": f"1000{i:02d}", "stock_name": f"t{i}"} for i in range(3)],
+            }
+        monkeypatch.setattr(ft, "fetch_a", mock_a, raising=False)
+        monkeypatch.setattr(ft, "fetch_b", mock_b, raising=False)
+
+        result = engine.run_scan(max_workers=1)
+        summary = result["signal_summary"]
+        assert summary["total_stocks_with_signals"] == 13  # 10 + 3, no overlap
+        assert len(summary["top_signals"]) == 2
