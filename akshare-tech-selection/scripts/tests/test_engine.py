@@ -287,3 +287,74 @@ class TestRunScan:
         summary = result["signal_summary"]
         assert summary["total_stocks_with_signals"] == 13  # 10 + 3, no overlap
         assert len(summary["top_signals"]) == 2
+
+
+class TestRunFull:
+    def test_has_detailed_signal_summary(self, monkeypatch):
+        import fetcher as ft
+        test_indicators = [
+            {"name": "fetch_a", "api": "mock", "category": "A类", "categories": ["A"],
+             "code_col": "代码", "name_col": "名称", "needs_symbol": False,
+             "default_symbol": None, "needs_date": False},
+            {"name": "fetch_b", "api": "mock", "category": "B类", "categories": ["B"],
+             "code_col": "代码", "name_col": "名称", "needs_symbol": False,
+             "default_symbol": None, "needs_date": False},
+        ]
+        monkeypatch.setattr(ft, "ALL_INDICATORS", test_indicators)
+
+        def mock_a(symbol=None, date=None):
+            return {
+                "indicator": "fetch_a", "category": "A类", "categories": ["A"],
+                "count": 5,
+                "data": [{"stock_code": f"0000{i:02d}", "stock_name": f"s{i}"} for i in range(5)],
+            }
+        def mock_b(symbol=None, date=None):
+            return None  # this one fails
+        monkeypatch.setattr(ft, "fetch_a", mock_a, raising=False)
+        monkeypatch.setattr(ft, "fetch_b", mock_b, raising=False)
+
+        result = engine.run_full(max_workers=1)
+
+        assert result["mode"] == "full"
+        assert result["total_indicators"] == 2
+        assert result["succeeded_indicators"] == 1
+
+        # signal_summary 详细版有 indicators 数组
+        summary = result["signal_summary"]
+        assert "indicators" in summary
+        assert "total_stocks_with_signals" in summary
+        assert len(summary["indicators"]) == 2
+
+        # fetch_a 应该是 success
+        a_info = [i for i in summary["indicators"] if i["indicator"] == "fetch_a"][0]
+        assert a_info["status"] == "success"
+        assert a_info["total_rows"] == 5
+
+        # fetch_b 应该有 error status
+        b_info = [i for i in summary["indicators"] if i["indicator"] == "fetch_b"][0]
+        assert b_info["status"] == "error"
+        assert b_info["total_rows"] == 0
+
+    def test_data_structure_same_as_scan(self, monkeypatch):
+        import fetcher as ft
+        test_indicators = [
+            {"name": "fetch_a", "api": "mock", "category": "A类", "categories": ["A"],
+             "code_col": "代码", "name_col": "名称", "needs_symbol": False,
+             "default_symbol": None, "needs_date": False},
+        ]
+        monkeypatch.setattr(ft, "ALL_INDICATORS", test_indicators)
+
+        def mock_a(symbol=None, date=None):
+            return {
+                "indicator": "fetch_a", "category": "A类", "categories": ["A"],
+                "count": 1,
+                "data": [{"stock_code": "000001", "stock_name": "平安", "val": 1}],
+            }
+        monkeypatch.setattr(ft, "fetch_a", mock_a, raising=False)
+
+        result = engine.run_full()
+        assert "data" in result
+        assert len(result["data"]) == 1
+        assert result["data"][0]["stock_code"] == "000001"
+        assert result["data"][0]["signal_count"] == 1
+        assert "signals" in result["data"][0]
