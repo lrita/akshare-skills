@@ -912,4 +912,386 @@ def fetch_xzjp_ths(symbol: str | None = None, date: str | None = None) -> dict |
     return standardize_output(big_df, "股票代码", "股票简称", "fetch_xzjp_ths", "险资举牌", ["同花顺技术指标", "资金类"])
 
 
-# ======== 以下由任务 4 填充 ========
+# ======== 巨潮资讯 (1 个) ========
+
+def fetch_forecast_cninfo(symbol: str | None = None, date: str = "20230817") -> dict | None:
+    """机构评级预测"""
+    def _get_file_content_cninfo(file: str = "cninfo.js") -> str:
+        setting_file_path = get_ths_js(file)
+        with open(setting_file_path, encoding="utf-8") as f:
+            file_data = f.read()
+        return file_data
+
+    url = "http://webapi.cninfo.com.cn/api/sysapi/p_sysapi1089"
+    params = {"tdate": "-".join([date[:4], date[4:6], date[6:]])}
+    js_code = py_mini_racer.MiniRacer()
+    js_content = _get_file_content_cninfo("cninfo.js")
+    js_code.eval(js_content)
+    mcode = js_code.call("getResCode1")
+    headers = {
+        "Accept": "*/*",
+        "Accept-Enckey": mcode,
+        "Accept-Encoding": "gzip, deflate",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Cache-Control": "no-cache",
+        "Content-Length": "0",
+        "Host": "webapi.cninfo.com.cn",
+        "Origin": "http://webapi.cninfo.com.cn",
+        "Pragma": "no-cache",
+        "Proxy-Connection": "keep-alive",
+        "Referer": "http://webapi.cninfo.com.cn/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/93.0.4577.63 Safari/537.36",
+        "X-Requested-With": "XMLHttpRequest",
+    }
+    r = requests.post(url, params=params, headers=headers)
+    _check_thx_blocked(r, "fetch_forecast_cninfo")
+    data_json = r.json()
+    temp_df = pd.DataFrame(data_json["records"])
+    temp_df.columns = [
+        "证券简称", "发布日期", "前一次投资评级", "评级变化", "目标价格-上限",
+        "是否首次评级", "投资评级", "研究员名称", "研究机构简称", "目标价格-下限", "证券代码",
+    ]
+    temp_df = temp_df[["证券代码", "证券简称", "发布日期", "研究机构简称", "研究员名称",
+                        "投资评级", "是否首次评级", "评级变化", "前一次投资评级",
+                        "目标价格-下限", "目标价格-上限"]]
+    temp_df["目标价格-上限"] = pd.to_numeric(temp_df["目标价格-上限"], errors="coerce")
+    temp_df["目标价格-下限"] = pd.to_numeric(temp_df["目标价格-下限"], errors="coerce")
+    return standardize_output(temp_df, "证券代码", "证券简称", "fetch_forecast_cninfo", "机构评级", ["同花顺技术指标", "评级类"])
+
+
+# ======== 东方财富涨停板 (6 个) ========
+
+def fetch_zt_pool_strong(symbol: str | None = None, date: str = "20241231") -> dict | None:
+    """强势涨停池"""
+    url = "https://push2ex.eastmoney.com/getTopicQSPool"
+    params = {
+        "ut": "7eea3edcaed734bea9cbfc24409ed989",
+        "dpt": "wz.ztzt",
+        "Pageindex": "0",
+        "pagesize": "5000",
+        "sort": "zdp:desc",
+        "date": date,
+    }
+    try:
+        r = requests.get(url, params=params)
+        data_json = r.json()
+        if data_json["data"] is None:
+            return None
+        if len(data_json["data"]["pool"]) == 0:
+            return None
+        temp_df = pd.DataFrame(data_json["data"]["pool"])
+        temp_df.reset_index(inplace=True)
+        temp_df["index"] = range(1, len(temp_df) + 1)
+        temp_df.columns = [
+            "序号", "代码", "_", "名称", "最新价", "涨停价", "_", "涨跌幅", "成交额",
+            "流通市值", "总市值", "换手率", "是否新高", "入选理由", "量比", "涨速", "涨停统计", "所属行业",
+        ]
+        temp_df["涨停统计"] = (
+            temp_df["涨停统计"].apply(lambda x: dict(x)["days"]).astype(str)
+            + "/" + temp_df["涨停统计"].apply(lambda x: dict(x)["ct"]).astype(str)
+        )
+        temp_df = temp_df[["序号", "代码", "名称", "涨跌幅", "最新价", "涨停价", "成交额",
+                            "流通市值", "总市值", "换手率", "涨速", "是否新高", "量比",
+                            "涨停统计", "入选理由", "所属行业"]]
+        temp_df["最新价"] = temp_df["最新价"] / 1000
+        temp_df["涨停价"] = temp_df["涨停价"] / 1000
+        explained_map = {1: "60日新高", 2: "近期多次涨停", 3: "60日新高且近期多次涨停"}
+        temp_df["入选理由"] = temp_df["入选理由"].apply(lambda x: explained_map[x])
+        temp_df["是否新高"] = temp_df["是否新高"].apply(lambda x: "是" if x == 1 else "否")
+        temp_df["涨跌幅"] = pd.to_numeric(temp_df["涨跌幅"], errors="coerce")
+        temp_df["最新价"] = pd.to_numeric(temp_df["最新价"], errors="coerce")
+        temp_df["涨停价"] = pd.to_numeric(temp_df["涨停价"], errors="coerce")
+        temp_df["成交额"] = pd.to_numeric(temp_df["成交额"], errors="coerce")
+        temp_df["流通市值"] = pd.to_numeric(temp_df["流通市值"], errors="coerce")
+        temp_df["总市值"] = pd.to_numeric(temp_df["总市值"], errors="coerce")
+        temp_df["换手率"] = pd.to_numeric(temp_df["换手率"], errors="coerce")
+        temp_df["涨速"] = pd.to_numeric(temp_df["涨速"], errors="coerce")
+        temp_df["量比"] = pd.to_numeric(temp_df["量比"], errors="coerce")
+        return standardize_output(temp_df, "代码", "名称", "fetch_zt_pool_strong", "强势涨停", ["涨停板分析"])
+    except Exception:
+        return None
+
+
+def fetch_zt_pool(symbol: str | None = None, date: str = "20241008") -> dict | None:
+    """涨停池"""
+    url = "https://push2ex.eastmoney.com/getTopicZTPool"
+    params = {
+        "ut": "7eea3edcaed734bea9cbfc24409ed989",
+        "dpt": "wz.ztzt",
+        "Pageindex": "0",
+        "pagesize": "10000",
+        "sort": "fbt:asc",
+        "date": date,
+    }
+    try:
+        r = requests.get(url, params=params)
+        data_json = r.json()
+        if data_json["data"] is None:
+            return None
+        if len(data_json["data"]["pool"]) == 0:
+            return None
+        temp_df = pd.DataFrame(data_json["data"]["pool"])
+        temp_df.reset_index(inplace=True)
+        temp_df["index"] = range(1, len(temp_df) + 1)
+        temp_df.columns = [
+            "序号", "代码", "_", "名称", "最新价", "涨跌幅", "成交额", "流通市值", "总市值",
+            "换手率", "连板数", "首次封板时间", "最后封板时间", "封板资金", "炸板次数", "所属行业", "涨停统计",
+        ]
+        temp_df["涨停统计"] = (
+            temp_df["涨停统计"].apply(lambda x: dict(x)["days"]).astype(str)
+            + "/" + temp_df["涨停统计"].apply(lambda x: dict(x)["ct"]).astype(str)
+        )
+        temp_df = temp_df[["序号", "代码", "名称", "涨跌幅", "最新价", "成交额", "流通市值", "总市值",
+                            "换手率", "封板资金", "首次封板时间", "最后封板时间", "炸板次数",
+                            "涨停统计", "连板数", "所属行业"]]
+        temp_df["首次封板时间"] = temp_df["首次封板时间"].astype(str).str.zfill(6)
+        temp_df["最后封板时间"] = temp_df["最后封板时间"].astype(str).str.zfill(6)
+        temp_df["最新价"] = temp_df["最新价"] / 1000
+        temp_df["涨跌幅"] = pd.to_numeric(temp_df["涨跌幅"], errors="coerce")
+        temp_df["最新价"] = pd.to_numeric(temp_df["最新价"], errors="coerce")
+        temp_df["成交额"] = pd.to_numeric(temp_df["成交额"], errors="coerce")
+        temp_df["流通市值"] = pd.to_numeric(temp_df["流通市值"], errors="coerce")
+        temp_df["总市值"] = pd.to_numeric(temp_df["总市值"], errors="coerce")
+        temp_df["换手率"] = pd.to_numeric(temp_df["换手率"], errors="coerce")
+        temp_df["封板资金"] = pd.to_numeric(temp_df["封板资金"], errors="coerce")
+        temp_df["炸板次数"] = pd.to_numeric(temp_df["炸板次数"], errors="coerce")
+        temp_df["连板数"] = pd.to_numeric(temp_df["连板数"], errors="coerce")
+        return standardize_output(temp_df, "代码", "名称", "fetch_zt_pool", "涨停池", ["涨停板分析"])
+    except Exception:
+        return None
+
+
+def fetch_zt_pool_dtgc(symbol: str | None = None, date: str = "20241011") -> dict | None:
+    """跌停股池"""
+    url = "https://push2ex.eastmoney.com/getTopicDTPool"
+    params = {
+        "ut": "7eea3edcaed734bea9cbfc24409ed989",
+        "dpt": "wz.ztzt",
+        "Pageindex": "0",
+        "pagesize": "10000",
+        "sort": "fund:asc",
+        "date": date,
+    }
+    try:
+        r = requests.get(url, params=params)
+        data_json = r.json()
+        if len(data_json["data"]["pool"]) == 0:
+            return None
+        temp_df = pd.DataFrame(data_json["data"]["pool"])
+        temp_df.reset_index(inplace=True)
+        temp_df["index"] = range(1, len(temp_df) + 1)
+        temp_df.columns = [
+            "序号", "代码", "_", "名称", "最新价", "涨跌幅", "成交额", "流通市值", "总市值",
+            "动态市盈率", "换手率", "封单资金", "最后封板时间", "板上成交额", "连续跌停", "开板次数", "所属行业",
+        ]
+        temp_df = temp_df[["序号", "代码", "名称", "涨跌幅", "最新价", "成交额", "流通市值",
+                            "总市值", "动态市盈率", "换手率", "封单资金", "最后封板时间",
+                            "板上成交额", "连续跌停", "开板次数", "所属行业"]]
+        temp_df["最新价"] = temp_df["最新价"] / 1000
+        temp_df["最后封板时间"] = temp_df["最后封板时间"].astype(str).str.zfill(6)
+        temp_df["涨跌幅"] = pd.to_numeric(temp_df["涨跌幅"], errors="coerce")
+        temp_df["最新价"] = pd.to_numeric(temp_df["最新价"], errors="coerce")
+        temp_df["成交额"] = pd.to_numeric(temp_df["成交额"], errors="coerce")
+        temp_df["流通市值"] = pd.to_numeric(temp_df["流通市值"], errors="coerce")
+        temp_df["总市值"] = pd.to_numeric(temp_df["总市值"], errors="coerce")
+        temp_df["动态市盈率"] = pd.to_numeric(temp_df["动态市盈率"], errors="coerce")
+        temp_df["换手率"] = pd.to_numeric(temp_df["换手率"], errors="coerce")
+        temp_df["封单资金"] = pd.to_numeric(temp_df["封单资金"], errors="coerce")
+        temp_df["板上成交额"] = pd.to_numeric(temp_df["板上成交额"], errors="coerce")
+        temp_df["连续跌停"] = pd.to_numeric(temp_df["连续跌停"], errors="coerce")
+        temp_df["开板次数"] = pd.to_numeric(temp_df["开板次数"], errors="coerce")
+        return standardize_output(temp_df, "代码", "名称", "fetch_zt_pool_dtgc", "跌停股池", ["涨停板分析"])
+    except Exception:
+        return None
+
+
+def fetch_zt_pool_sub_new(symbol: str | None = None, date: str = "20241231") -> dict | None:
+    """次新股池"""
+    url = "https://push2ex.eastmoney.com/getTopicCXPooll"
+    params = {
+        "ut": "7eea3edcaed734bea9cbfc24409ed989",
+        "dpt": "wz.ztzt",
+        "Pageindex": "0",
+        "pagesize": "5000",
+        "sort": "ods:asc",
+        "date": date,
+    }
+    try:
+        r = requests.get(url, params=params)
+        data_json = r.json()
+        if len(data_json["data"]["pool"]) == 0:
+            return None
+        temp_df = pd.DataFrame(data_json["data"]["pool"])
+        temp_df.reset_index(inplace=True)
+        temp_df["index"] = range(1, len(temp_df) + 1)
+        temp_df.columns = [
+            "序号", "代码", "_", "名称", "最新价", "涨停价", "_", "涨跌幅", "成交额",
+            "流通市值", "总市值", "转手率", "开板几日", "开板日期", "上市日期", "_",
+            "是否新高", "涨停统计", "所属行业",
+        ]
+        temp_df["涨停统计"] = (
+            temp_df["涨停统计"].apply(lambda x: dict(x)["days"]).astype(str)
+            + "/" + temp_df["涨停统计"].apply(lambda x: dict(x)["ct"]).astype(str)
+        )
+        temp_df = temp_df[["序号", "代码", "名称", "涨跌幅", "最新价", "涨停价", "成交额",
+                            "流通市值", "总市值", "转手率", "开板几日", "开板日期",
+                            "上市日期", "是否新高", "涨停统计", "所属行业"]]
+        temp_df["最新价"] = temp_df["最新价"] / 1000
+        temp_df["涨停价"] = temp_df["涨停价"] / 1000
+        temp_df.loc[temp_df["涨停价"] > 100000, "涨停价"] = pd.NA
+        temp_df["开板日期"] = pd.to_datetime(temp_df["开板日期"], format="%Y%m%d").dt.date
+        temp_df["上市日期"] = pd.to_datetime(temp_df["上市日期"], format="%Y%m%d").dt.date
+        temp_df.loc[temp_df["上市日期"] == 0, "上市日期"] = pd.NaT
+        temp_df["是否新高"] = temp_df["是否新高"].apply(lambda x: "是" if x == 1 else "否")
+        return standardize_output(temp_df, "代码", "名称", "fetch_zt_pool_sub_new", "次新股池", ["涨停板分析"])
+    except Exception:
+        return None
+
+
+def fetch_zt_pool_previous(symbol: str | None = None, date: str = "20240415") -> dict | None:
+    """昨日涨停表现"""
+    url = "https://push2ex.eastmoney.com/getYesterdayZTPool"
+    params = {
+        "ut": "7eea3edcaed734bea9cbfc24409ed989",
+        "dpt": "wz.ztzt",
+        "Pageindex": "0",
+        "pagesize": "5000",
+        "sort": "zs:desc",
+        "date": date,
+    }
+    try:
+        r = requests.get(url, params=params)
+        data_json = r.json()
+        if data_json["data"] is None:
+            return None
+        if len(data_json["data"]["pool"]) == 0:
+            return None
+        temp_df = pd.DataFrame(data_json["data"]["pool"])
+        temp_df.reset_index(inplace=True)
+        temp_df["index"] = range(1, len(temp_df) + 1)
+        temp_df.columns = [
+            "序号", "代码", "_", "名称", "最新价", "涨停价", "涨跌幅", "成交额",
+            "流通市值", "总市值", "换手率", "振幅", "涨速", "昨日封板时间", "昨日连板数", "所属行业", "涨停统计",
+        ]
+        temp_df["涨停统计"] = (
+            temp_df["涨停统计"].apply(lambda x: dict(x)["days"]).astype(str)
+            + "/" + temp_df["涨停统计"].apply(lambda x: dict(x)["ct"]).astype(str)
+        )
+        temp_df = temp_df[["序号", "代码", "名称", "涨跌幅", "最新价", "涨停价", "成交额",
+                            "流通市值", "总市值", "换手率", "涨速", "振幅", "昨日封板时间",
+                            "昨日连板数", "涨停统计", "所属行业"]]
+        temp_df["最新价"] = temp_df["最新价"] / 1000
+        temp_df["涨停价"] = temp_df["涨停价"] / 1000
+        temp_df["昨日封板时间"] = temp_df["昨日封板时间"].astype(str).str.zfill(6)
+        return standardize_output(temp_df, "代码", "名称", "fetch_zt_pool_previous", "昨日涨停表现", ["涨停板分析"])
+    except Exception:
+        return None
+
+
+def fetch_zt_pool_zbgc(symbol: str | None = None, date: str = "20241011") -> dict | None:
+    """炸板股池"""
+    url = "https://push2ex.eastmoney.com/getTopicZBPool"
+    params = {
+        "ut": "7eea3edcaed734bea9cbfc24409ed989",
+        "dpt": "wz.ztzt",
+        "Pageindex": "0",
+        "pagesize": "5000",
+        "sort": "fbt:asc",
+        "date": date,
+    }
+    try:
+        r = requests.get(url, params=params)
+        data_json = r.json()
+        if data_json["data"] is None:
+            return None
+        if len(data_json["data"]["pool"]) == 0:
+            return None
+        temp_df = pd.DataFrame(data_json["data"]["pool"])
+        temp_df.reset_index(inplace=True)
+        temp_df["index"] = range(1, len(temp_df) + 1)
+        temp_df.columns = [
+            "序号", "代码", "_", "名称", "最新价", "涨停价", "涨跌幅", "成交额",
+            "流通市值", "总市值", "换手率", "首次封板时间", "炸板次数", "振幅", "涨速", "涨停统计", "所属行业",
+        ]
+        temp_df["涨停统计"] = (
+            temp_df["涨停统计"].apply(lambda x: dict(x)["days"]).astype(str)
+            + "/" + temp_df["涨停统计"].apply(lambda x: dict(x)["ct"]).astype(str)
+        )
+        temp_df = temp_df[["序号", "代码", "名称", "涨跌幅", "最新价", "涨停价", "成交额",
+                            "流通市值", "总市值", "换手率", "涨速", "首次封板时间",
+                            "炸板次数", "涨停统计", "振幅", "所属行业"]]
+        temp_df["最新价"] = temp_df["最新价"] / 1000
+        temp_df["涨停价"] = temp_df["涨停价"] / 1000
+        temp_df["首次封板时间"] = temp_df["首次封板时间"].astype(str).str.zfill(6)
+        return standardize_output(temp_df, "代码", "名称", "fetch_zt_pool_zbgc", "炸板股池", ["涨停板分析"])
+    except Exception:
+        return None
+
+
+# ======== 东方财富异动监控 (2 个) ========
+
+def fetch_board_change(symbol: str | None = None, date: str | None = None) -> dict | None:
+    """板块异动排名"""
+    url = "https://push2ex.eastmoney.com/getAllBKChanges"
+    params = {
+        "ut": "7eea3edcaed734bea9cbfc24409ed989",
+        "dpt": "wzchanges",
+        "pageindex": "0",
+        "pagesize": "5000",
+    }
+    try:
+        r = requests.get(url, params=params)
+        data_json = r.json()
+        data_df = pd.DataFrame(data_json["data"]["allbk"])
+        data_df.columns = [
+            "-", "-", "板块名称", "涨跌幅", "主力净流入", "板块异动总次数", "ms", "板块具体异动类型列表及出现次数",
+        ]
+        data_df["板块异动最频繁个股及所属类型-买卖方向"] = [item["m"] for item in data_df["ms"]]
+        data_df["板块异动最频繁个股及所属类型-股票代码"] = [item["c"] for item in data_df["ms"]]
+        data_df["板块异动最频繁个股及所属类型-股票名称"] = [item["n"] for item in data_df["ms"]]
+        data_df["板块异动最频繁个股及所属类型-买卖方向"] = data_df["板块异动最频繁个股及所属类型-买卖方向"].map({0: "大笔买入", 1: "大笔卖出"})
+        data_df = data_df[["板块名称", "涨跌幅", "主力净流入", "板块异动总次数",
+                            "板块异动最频繁个股及所属类型-股票代码",
+                            "板块异动最频繁个股及所属类型-股票名称",
+                            "板块异动最频繁个股及所属类型-买卖方向",
+                            "板块具体异动类型列表及出现次数"]]
+        data_df["涨跌幅"] = pd.to_numeric(data_df["涨跌幅"], errors="coerce")
+        data_df["主力净流入"] = pd.to_numeric(data_df["主力净流入"], errors="coerce")
+        data_df["板块异动总次数"] = pd.to_numeric(data_df["板块异动总次数"], errors="coerce")
+        return standardize_output(data_df, "板块异动最频繁个股及所属类型-股票代码",
+                                  "板块异动最频繁个股及所属类型-股票名称",
+                                  "fetch_board_change", "板块异动", ["异动监控"])
+    except Exception:
+        return None
+
+
+def fetch_changes(symbol: str = "大笔买入", date: str | None = None) -> dict | None:
+    """个股盘口异动"""
+    symbol_map = {
+        "火箭发射": "8201", "快速反弹": "8202", "大笔买入": "8193", "封涨停板": "4",
+        "打开跌停板": "32", "有大买盘": "64", "竞价上涨": "8207", "高开5日线": "8209",
+        "向上缺口": "8211", "60日新高": "8213", "60日大幅上涨": "8215", "加速下跌": "8204",
+        "高台跳水": "8203", "大笔卖出": "8194", "封跌停板": "8", "打开涨停板": "16",
+        "有大卖盘": "128", "竞价下跌": "8208", "低开5日线": "8210", "向下缺口": "8212",
+        "60日新低": "8214", "60日大幅下跌": "8216",
+    }
+    reversed_symbol_map = {v: k for k, v in symbol_map.items()}
+    params = {
+        "type": symbol_map[symbol],
+        "pageindex": "0",
+        "pagesize": "5000",
+        "ut": "7eea3edcaed734bea9cbfc24409ed989",
+        "dpt": "wzchanges",
+    }
+    try:
+        r = requests.get("https://push2ex.eastmoney.com/getAllStockChanges", params=params)
+        data_json = r.json()
+        temp_df = pd.DataFrame(data_json["data"]["allstock"])
+        temp_df["tm"] = pd.to_datetime(temp_df["tm"], format="%H%M%S").dt.time
+        temp_df.columns = ["时间", "代码", "_", "名称", "板块", "相关信息"]
+        temp_df = temp_df[["时间", "代码", "名称", "板块", "相关信息"]]
+        temp_df["板块"] = temp_df["板块"].astype(str)
+        temp_df["板块"] = temp_df["板块"].map(reversed_symbol_map)
+        return standardize_output(temp_df, "代码", "名称", "fetch_changes", "个股异动", ["异动监控"])
+    except Exception:
+        return None
