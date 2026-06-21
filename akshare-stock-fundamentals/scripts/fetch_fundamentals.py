@@ -546,3 +546,71 @@ def fetch_pledge(code: str) -> list[dict]:
         return []
     records = df.to_dict(orient="records")
     return [r for r in records if r.get("质押状态", "") == "未解押"]
+
+
+def fetch_research_visits(code: str, date_str: str) -> list[dict]:
+    """获取近30日机构调研记录，按股票代码/名称过滤。
+
+    Args:
+        code: 股票代码
+        date_str: 基准日期 YYYYMMDD
+
+    Returns:
+        list[dict], 失败返回空列表
+    """
+    try:
+        import akshare as ak
+    except ImportError:
+        return []
+    end_date = datetime.strptime(date_str, "%Y%m%d")
+    start_date = end_date - timedelta(days=30)
+    all_results = []
+    seen = set()
+    current = start_date
+    while current <= end_date:
+        date_key = current.strftime("%Y%m%d")
+        try:
+            df = ak.stock_jgdy_tj_em(date=date_key)
+        except Exception:
+            current += timedelta(days=1)
+            continue
+        if df is not None and not df.empty:
+            records = df.to_dict(orient="records")
+            for r in records:
+                if (str(r.get("股票代码", "")) == code
+                        or str(r.get("股票名称", "")) == code):
+                    # 按股票代码+日期去重
+                    key = (str(r.get("股票代码", "")), str(r.get("日期", "")))
+                    if key not in seen:
+                        seen.add(key)
+                        all_results.append(r)
+        current += timedelta(days=1)
+    return all_results
+
+
+def fetch_notices(code: str, date_str: str) -> list[dict]:
+    """获取个股公告（近90日，全部类型）。
+
+    Args:
+        code: 股票代码
+        date_str: 基准日期 YYYYMMDD
+
+    Returns:
+        list[dict], 失败返回空列表
+    """
+    if ak is None:
+        return []
+    end_date = datetime.strptime(date_str, "%Y%m%d")
+    begin_date = end_date - timedelta(days=90)
+    try:
+        df = ak.stock_individual_notice_report(
+            security=code,
+            symbol="全部",
+            begin_date=begin_date.strftime("%Y%m%d"),
+            end_date=end_date.strftime("%Y%m%d"),
+        )
+    except Exception:
+        return []
+    if df is None or df.empty:
+        return []
+    return df.to_dict(orient="records")
