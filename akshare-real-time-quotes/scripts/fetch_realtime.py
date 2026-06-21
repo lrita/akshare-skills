@@ -146,7 +146,10 @@ def fetch_intraday_minute(code: str) -> dict:
         return {}
 
     # 去掉 "min_data=" 前缀，解析 JSON
-    json_str = raw[len("min_data="):]
+    prefix = "min_data="
+    if not raw.startswith(prefix):
+        return {}
+    json_str = raw[len(prefix):]
     try:
         data = json.loads(json_str)
     except json.JSONDecodeError:
