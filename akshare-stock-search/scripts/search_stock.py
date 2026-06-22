@@ -3,6 +3,7 @@
 """Stock search with local SQLite cache. Fast code/name/keyword/pinyin lookup for A/HK stocks."""
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sqlite3
@@ -336,8 +337,6 @@ def cmd_refresh(args) -> int:
 
 
 def main() -> None:
-    import argparse
-
     parser = argparse.ArgumentParser(description="A股/港股股票搜索")
     subparsers = parser.add_subparsers(dest="command")
 
