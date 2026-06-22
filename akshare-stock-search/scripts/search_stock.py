@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # ---- tqdm patch: silence progress bars from akshare ----
+os.environ.setdefault("TQDM_DISABLE", "1")
 try:
     import tqdm as _tqdm_mod
     _original_tqdm_init = _tqdm_mod.tqdm.__init__
