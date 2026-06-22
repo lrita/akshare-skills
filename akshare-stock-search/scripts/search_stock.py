@@ -79,7 +79,7 @@ def _needs_refresh(db_path: Path) -> bool:
     if not db_path.exists():
         return True
     ttl = _ttl_days()
-    conn = sqlite3.connect(str(db_path))
+    conn = _get_conn(db_path)
     try:
         row = conn.execute("SELECT MAX(updated_at) FROM stock_map").fetchone()
         if not row or not row[0]:
@@ -98,7 +98,8 @@ def _needs_refresh(db_path: Path) -> bool:
 def _pinyin_initials(name: str) -> str | None:
     try:
         from pypinyin import lazy_pinyin
-        return "".join(w[0].lower() for w in lazy_pinyin(name) if w)
+        result = "".join(w[0].lower() for w in lazy_pinyin(name) if w)
+        return result or None
     except ImportError:
         return None
 
@@ -142,7 +143,7 @@ def refresh_stock_cache(*, force: bool = False) -> dict:
 
             rows = []
             for _, row in df.iterrows():
-                name = str(row.get("name", "") or row.get("名称", ""))
+                name = str(row.get("name", "") or row.get("名称", "") or row.get("中文名称", ""))
                 code = str(row.get("code", "") or row.get("代码", ""))
                 if not name or not code:
                     continue
