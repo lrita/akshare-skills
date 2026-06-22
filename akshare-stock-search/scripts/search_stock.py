@@ -170,3 +170,101 @@ def refresh_stock_cache(*, force: bool = False) -> dict:
         return result
     finally:
         conn.close()
+
+
+def _search_db(conn: sqlite3.Connection, keyword: str, market: str | None) -> list[StockResult]:
+    results: list[StockResult] = []
+    seen: set[tuple[str, str]] = set()
+    market_filter = "AND market = ?" if market else ""
+    market_params = (market,) if market else ()
+
+    # Priority 1: exact match on code
+    for row in conn.execute(
+        f"SELECT market, code, name FROM stock_map WHERE code = ? {market_filter}",
+        (keyword,) + market_params,
+    ):
+        r = StockResult(row[0], row[1], row[2], "exact")
+        results.append(r)
+        seen.add((r.code, r.market))
+
+    # Priority 2: exact match on name
+    for row in conn.execute(
+        f"SELECT market, code, name FROM stock_map WHERE name = ? {market_filter}",
+        (keyword,) + market_params,
+    ):
+        if (row[1], row[0]) not in seen:
+            r = StockResult(row[0], row[1], row[2], "exact")
+            results.append(r)
+            seen.add((r.code, r.market))
+
+    # Priority 3: prefix match on code or name
+    like_prefix = f"{keyword}%"
+    for row in conn.execute(
+        f"SELECT market, code, name FROM stock_map WHERE (code LIKE ? OR name LIKE ?) {market_filter}",
+        (like_prefix, like_prefix) + market_params,
+    ):
+        if (row[1], row[0]) not in seen:
+            r = StockResult(row[0], row[1], row[2], "prefix")
+            results.append(r)
+            seen.add((r.code, r.market))
+
+    # Priority 4: fuzzy match (contains)
+    like_fuzzy = f"%{keyword}%"
+    for row in conn.execute(
+        f"SELECT market, code, name FROM stock_map WHERE (code LIKE ? OR name LIKE ?) {market_filter}",
+        (like_fuzzy, like_fuzzy) + market_params,
+    ):
+        if (row[1], row[0]) not in seen:
+            r = StockResult(row[0], row[1], row[2], "fuzzy")
+            results.append(r)
+            seen.add((r.code, r.market))
+
+    # Priority 5: pinyin match
+    if keyword.isalpha() and keyword.isascii():
+        like_pinyin = f"%{keyword.lower()}%"
+        for row in conn.execute(
+            f"SELECT market, code, name FROM stock_map WHERE pinyin LIKE ? {market_filter}",
+            (like_pinyin,) + market_params,
+        ):
+            if (row[1], row[0]) not in seen:
+                r = StockResult(row[0], row[1], row[2], "pinyin")
+                results.append(r)
+                seen.add((r.code, r.market))
+
+    return _sort_results(results)
+
+
+def _sort_results(results: list[StockResult]) -> list[StockResult]:
+    market_rank = {"zh_a": 0, "hk": 1}
+    match_rank = {"exact": 0, "prefix": 1, "fuzzy": 2, "pinyin": 3}
+    return sorted(results, key=lambda r: (
+        match_rank.get(r.match_type, 9),
+        market_rank.get(r.market, 9),
+        r.code,
+    ))
+
+
+def search_stock(keyword: str, *, market: str | None = None, limit: int = 20) -> list[StockResult]:
+    """Search stocks by keyword in local SQLite cache.
+
+    Searches in priority order: exact code, exact name, prefix, fuzzy, pinyin.
+
+    Args:
+        keyword: search keyword (code, name, or pinyin initials)
+        market: limit to 'zh_a' or 'hk', None for all markets
+        limit: max results to return (default 20)
+
+    Returns:
+        list of StockResult sorted by match_type priority
+    """
+    db_path = _db_path()
+    if _needs_refresh(db_path):
+        refresh_stock_cache(force=False)
+    if not db_path.exists():
+        return []
+    conn = _get_conn(db_path)
+    try:
+        results = _search_db(conn, keyword, market)
+        return results[:limit]
+    finally:
+        conn.close()
