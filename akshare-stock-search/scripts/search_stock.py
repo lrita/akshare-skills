@@ -3,6 +3,7 @@
 """Stock search with local SQLite cache. Fast code/name/keyword/pinyin lookup for A/HK stocks."""
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import sys
@@ -268,3 +269,96 @@ def search_stock(keyword: str, *, market: str | None = None, limit: int = 20) ->
         return results[:limit]
     finally:
         conn.close()
+
+
+VALID_MARKETS = {"zh_a", "hk"}
+
+
+def _validate_market(market: str | None) -> str | None:
+    if market is None:
+        return None
+    if market not in VALID_MARKETS:
+        print(f"[ERROR] 非法 market 参数: {market}，可选值: {', '.join(sorted(VALID_MARKETS))}", file=sys.stderr)
+        sys.exit(2)
+    return market
+
+
+def _validate_keyword(keyword: str) -> str:
+    if not keyword or not keyword.strip():
+        print("[ERROR] 搜索关键词不能为空", file=sys.stderr)
+        sys.exit(2)
+    return keyword.strip()
+
+
+def _output_json(data, output_path: str | None) -> None:
+    json_str = json.dumps(data, ensure_ascii=False, default=str)
+    if output_path:
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(json_str)
+                f.write("\n")
+        except Exception as e:
+            print(f"[ERROR] 写入输出文件失败: {e}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        sys.stdout.write(json_str)
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+
+
+def cmd_search(args) -> int:
+    keyword = _validate_keyword(args.keyword)
+    market = _validate_market(args.market)
+
+    try:
+        results = search_stock(keyword, market=market, limit=args.limit)
+    except RuntimeError as e:
+        print(f"[ERROR] {e}", file=sys.stderr)
+        sys.exit(1)
+
+    output = [{"market": r.market, "code": r.code, "name": r.name, "match_type": r.match_type}
+              for r in results]
+    _output_json(output, args.output)
+    return 0
+
+
+def cmd_refresh(args) -> int:
+    try:
+        result = refresh_stock_cache(force=args.force)
+    except RuntimeError as e:
+        print(f"[ERROR] {e}", file=sys.stderr)
+        sys.exit(1)
+
+    _output_json(result, args.output)
+    return 0
+
+
+def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="A股/港股股票搜索")
+    subparsers = parser.add_subparsers(dest="command")
+
+    p_search = subparsers.add_parser("search", help="搜索股票")
+    p_search.add_argument("keyword", help="搜索关键词（代码、名称、拼音首字母）")
+    p_search.add_argument("--market", choices=sorted(VALID_MARKETS), default=None, help="限定市场")
+    p_search.add_argument("--limit", type=int, default=20, help="最大返回条数（默认 20）")
+    p_search.add_argument("--output", default=None, help="输出 JSON 文件路径，默认 stdout")
+    p_search.set_defaults(func=cmd_search)
+
+    p_refresh = subparsers.add_parser("refresh", help="刷新本地缓存")
+    p_refresh.add_argument("--force", action="store_true", help="强制全量刷新")
+    p_refresh.add_argument("--output", default=None, help="输出 JSON 文件路径，默认 stdout")
+    p_refresh.set_defaults(func=cmd_refresh)
+
+    args = parser.parse_args()
+    if not args.command:
+        parser.print_help()
+        sys.exit(2)
+
+    exit_code = args.func(args)
+    sys.exit(exit_code)
+
+
+if __name__ == "__main__":
+    main()
