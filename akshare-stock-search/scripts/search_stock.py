@@ -148,6 +148,8 @@ def refresh_stock_cache(*, force: bool = False) -> dict:
                 code = str(row.get("code", "") or row.get("代码", ""))
                 if not name or not code:
                     continue
+                # A-share codes may have exchange prefix like sz000001/sh600183
+                code = code.removeprefix("sz").removeprefix("sh").removeprefix("bj")
                 pinyin = _pinyin_initials(name)
                 rows.append((market, code, name, pinyin, now_ts))
 
